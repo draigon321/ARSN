@@ -61,6 +61,30 @@ interface WikiArticle {
   content: string
 }
 
+function readStoredState<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const raw = window.localStorage.getItem(key)
+    return raw === null ? fallback : JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
+
+function useStoredState<T>(key: string, fallback: T) {
+  const [state, setState] = useState<T>(() => readStoredState(key, fallback))
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(state))
+    } catch {
+      // Ignore storage failures and keep the in-memory state working.
+    }
+  }, [key, state])
+
+  return [state, setState] as const
+}
+
 // ─── Data ───────────────────────────────────────────────────────────────────
 
 const CHANNELS: Channel[] = [
@@ -421,47 +445,48 @@ const INIT_SYNC_LOG: SyncEvent[] = [
 // ─── BBS Section ─────────────────────────────────────────────────────────────
 
 function ChannelsSection() {
-  const [mode, setMode] = useState<'host' | 'client'>('host')
+  const [mode, setMode] = useStoredState<'host' | 'client'>('arsn.bbs.mode', 'host')
 
   // Host state
-  const [groups, setGroups] = useState<BBSGroup[]>(INIT_GROUPS)
-  const [channels, setChannels] = useState<BBSChannel[]>(INIT_CHANNELS)
+  const [groups, setGroups] = useStoredState<BBSGroup[]>('arsn.bbs.groups', INIT_GROUPS)
+  const [channels, setChannels] = useStoredState<BBSChannel[]>('arsn.bbs.channels', INIT_CHANNELS)
   const [clients] = useState<ConnectedClient[]>(INIT_CLIENTS)
   const [syncLog] = useState<SyncEvent[]>(INIT_SYNC_LOG)
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [activeChannel, setActiveChannel] = useState('general')
-  const [messages, setMessages] = useState<Record<string, Message[]>>(CHANNEL_MESSAGES)
-  const [input, setInput] = useState('')
-  const [rightPanel, setRightPanel] = useState<'clients' | 'settings'>('clients')
+  const [collapsedGroupIds, setCollapsedGroupIds] = useStoredState<string[]>('arsn.bbs.collapsedGroups', [])
+  const collapsedGroups = new Set(collapsedGroupIds)
+  const [activeChannel, setActiveChannel] = useStoredState('arsn.bbs.activeChannel', 'general')
+  const [messages, setMessages] = useStoredState<Record<string, Message[]>>('arsn.bbs.messages', CHANNEL_MESSAGES)
+  const [input, setInput] = useStoredState('arsn.bbs.input', '')
+  const [rightPanel, setRightPanel] = useStoredState<'clients' | 'settings'>('arsn.bbs.rightPanel', 'clients')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Host settings
-  const [boardName, setBoardName] = useState('ARSN-NODE-01')
-  const [nodeCallsign, setNodeCallsign] = useState('KD9LMX-BBS')
-  const [nodeMode, setNodeMode] = useState('USB')
+  const [boardName, setBoardName] = useStoredState('arsn.bbs.boardName', 'ARSN-NODE-01')
+  const [nodeCallsign, setNodeCallsign] = useStoredState('arsn.bbs.nodeCallsign', 'KD9LMX-BBS')
+  const [nodeMode, setNodeMode] = useStoredState('arsn.bbs.nodeMode', 'USB')
 
   interface FreqPair { tx: string; rx: string; mode: string; label: string }
-  const [freqPairs, setFreqPairs] = useState<FreqPair[]>([
+  const [freqPairs, setFreqPairs] = useStoredState<FreqPair[]>('arsn.bbs.freqPairs', [
     { tx: '14.300', rx: '14.300', mode: 'USB', label: 'Primary' },
     { tx: '7.250',  rx: '7.250',  mode: 'LSB', label: 'Backup'  },
     { tx: '146.520',rx: '146.520',mode: 'FM',  label: 'VHF'     },
   ])
-  const [activeFreqIdx, setActiveFreqIdx] = useState(0)
+  const [activeFreqIdx, setActiveFreqIdx] = useStoredState('arsn.bbs.activeFreqIdx', 0)
   const [freqModalOpen, setFreqModalOpen] = useState(false)
   const [editPairs, setEditPairs] = useState<FreqPair[]>(freqPairs)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsTab, setSettingsTab] = useState<'connection' | 'node' | 'clients' | 'synclog'>('connection')
-  const [connDevice, setConnDevice] = useState('Icom USB Control (CI-V)')
-  const [connPort, setConnPort] = useState('COM3')
-  const [connBaud, setConnBaud] = useState('19200')
-  const [connCivAddr, setConnCivAddr] = useState('94')
-  const [beaconInterval, setBeaconInterval] = useState('300')
-  const [syncInterval, setSyncInterval] = useState('60')
-  const [maxClients, setMaxClients] = useState('10')
-  const [requireAuth, setRequireAuth] = useState(false)
+  const [settingsTab, setSettingsTab] = useStoredState<'connection' | 'node' | 'clients' | 'synclog'>('arsn.bbs.settingsTab', 'connection')
+  const [connDevice, setConnDevice] = useStoredState('arsn.bbs.connDevice', 'Icom USB Control (CI-V)')
+  const [connPort, setConnPort] = useStoredState('arsn.bbs.connPort', 'COM3')
+  const [connBaud, setConnBaud] = useStoredState('arsn.bbs.connBaud', '19200')
+  const [connCivAddr, setConnCivAddr] = useStoredState('arsn.bbs.connCivAddr', '94')
+  const [beaconInterval, setBeaconInterval] = useStoredState('arsn.bbs.beaconInterval', '300')
+  const [syncInterval, setSyncInterval] = useStoredState('arsn.bbs.syncInterval', '60')
+  const [maxClients, setMaxClients] = useStoredState('arsn.bbs.maxClients', '10')
+  const [requireAuth, setRequireAuth] = useStoredState('arsn.bbs.requireAuth', false)
 
   // Sidebar resize
-  const [sidebarWidth, setSidebarWidth] = useState(230)
+  const [sidebarWidth, setSidebarWidth] = useStoredState('arsn.bbs.sidebarWidth', 230)
   const resizingRef = useRef(false)
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -503,9 +528,9 @@ function ChannelsSection() {
   const nodeFreq = freqPairs[activeFreqIdx]?.tx || '14.300'
   const [newGroupName, setNewGroupName] = useState('')
   const [newChanName, setNewChanName] = useState('')
-  const [newChanGroup, setNewChanGroup] = useState('ops')
+  const [newChanGroup, setNewChanGroup] = useStoredState('arsn.bbs.newChanGroup', 'ops')
   const [newChanFreq, setNewChanFreq] = useState('')
-  const [newChanMode, setNewChanMode] = useState('USB')
+  const [newChanMode, setNewChanMode] = useStoredState('arsn.bbs.newChanMode', 'USB')
   const [newChanDesc, setNewChanDesc] = useState('')
 
   // Client state
@@ -532,11 +557,7 @@ function ChannelsSection() {
   }
 
   const toggleGroup = (gid: string) => {
-    setCollapsedGroups(prev => {
-      const next = new Set(prev)
-      next.has(gid) ? next.delete(gid) : next.add(gid)
-      return next
-    })
+    setCollapsedGroupIds(prev => prev.includes(gid) ? prev.filter(id => id !== gid) : [...prev, gid])
   }
 
   const addGroup = () => {
@@ -1357,10 +1378,11 @@ function MessageRow({ msg }: { msg: Message }) {
 // ─── Mail Section ────────────────────────────────────────────────────────────
 
 function MailSection() {
-  const [selected, setSelected] = useState<MailMessage | null>(null)
-  const [composing, setComposing] = useState(false)
-  const [mails, setMails] = useState(MAIL_MESSAGES)
-  const [draft, setDraft] = useState({ to: '', subject: '', body: '' })
+  const [selectedId, setSelectedId] = useStoredState<number | null>('arsn.mail.selectedId', null)
+  const [composing, setComposing] = useStoredState('arsn.mail.composing', false)
+  const [mails, setMails] = useStoredState<MailMessage[]>('arsn.mail.messages', MAIL_MESSAGES)
+  const [draft, setDraft] = useStoredState('arsn.mail.draft', { to: '', subject: '', body: '' })
+  const selected = mails.find(m => m.id === selectedId) ?? null
 
   const send = () => {
     if (!draft.to || !draft.subject) return
@@ -1370,6 +1392,35 @@ function MailSection() {
     }
     setMails(prev => [newMsg, ...prev])
     setDraft({ to: '', subject: '', body: '' })
+    setComposing(false)
+    setSelectedId(newMsg.id)
+  }
+
+  const reply = () => {
+    if (!selected) return
+    setDraft({
+      to: selected.from,
+      subject: selected.subject.startsWith('RE:') ? selected.subject : `RE: ${selected.subject}`,
+      body: `\n\n--- Original message ---\n${selected.body}`,
+    })
+    setComposing(true)
+    setSelectedId(selected.id)
+  }
+
+  const forward = () => {
+    if (!selected) return
+    setDraft({
+      to: '',
+      subject: selected.subject.startsWith('FWD:') ? selected.subject : `FWD: ${selected.subject}`,
+      body: `\n\n--- Forwarded message from ${selected.from} ---\n${selected.body}`,
+    })
+    setComposing(true)
+  }
+
+  const removeSelected = () => {
+    if (!selected) return
+    setMails(prev => prev.filter(m => m.id !== selected.id))
+    setSelectedId(null)
     setComposing(false)
   }
 
@@ -1397,7 +1448,7 @@ function MailSection() {
                 borderBottom: '1px solid #0d150d',
                 background: selected?.id === m.id ? '#111d11' : 'transparent'
               }}
-              onClick={() => { setSelected(m); setComposing(false); setMails(prev => prev.map(x => x.id === m.id ? { ...x, read: true } : x)) }}
+              onClick={() => { setSelectedId(m.id); setComposing(false); setMails(prev => prev.map(x => x.id === m.id ? { ...x, read: true } : x)) }}
             >
               <div className="flex items-center gap-2 mb-1">
                 {!m.read && <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#4ade80', flexShrink: 0 }} />}
@@ -1483,6 +1534,7 @@ function MailSection() {
             <div className="flex gap-2 mt-6">
               {['REPLY', 'FORWARD', 'DELETE'].map(a => (
                 <button key={a}
+                  onClick={a === 'REPLY' ? reply : a === 'FORWARD' ? forward : removeSelected}
                   className="px-3 py-1.5 rounded font-display text-xs"
                   style={{ background: '#0f1a0f', border: '1px solid #1f3320', color: '#4a7a4a', fontSize: 9, letterSpacing: '0.08em' }}>
                   {a}
@@ -1518,18 +1570,18 @@ const PRESETS = [
 const REGIONS = ['US','EU_433','EU_868','JP','ANZ','KR','TW','RU','IN','NZ_865','TH','LORA_24']
 
 function LoRaSection() {
-  const [tab, setTab] = useState<'messages' | 'nodes' | 'channels' | 'config'>('messages')
-  const [activeChan, setActiveChan] = useState(0)
-  const [meshChannels, setMeshChannels] = useState<MeshChannel[]>(MESH_CHANNELS_INIT)
-  const [messages, setMessages] = useState<MeshMessage[]>(MESH_MESSAGES)
-  const [msgInput, setMsgInput] = useState('')
+  const [tab, setTab] = useStoredState<'messages' | 'nodes' | 'channels' | 'config'>('arsn.lora.tab', 'messages')
+  const [activeChan, setActiveChan] = useStoredState('arsn.lora.activeChan', 0)
+  const [meshChannels, setMeshChannels] = useStoredState<MeshChannel[]>('arsn.lora.meshChannels', MESH_CHANNELS_INIT)
+  const [messages, setMessages] = useStoredState<MeshMessage[]>('arsn.lora.messages', MESH_MESSAGES)
+  const [msgInput, setMsgInput] = useStoredState('arsn.lora.msgInput', '')
   const [selectedNode, setSelectedNode] = useState<MeshNode | null>(null)
-  const [preset, setPreset] = useState('LongFast')
-  const [region, setRegion] = useState('US')
-  const [txPower, setTxPower] = useState('20')
-  const [hopLimit, setHopLimit] = useState('3')
-  const [nodeLong, setNodeLong] = useState('KD9LMX ARSN Node')
-  const [nodeShort, setNodeShort] = useState('ARSN')
+  const [preset, setPreset] = useStoredState('arsn.lora.preset', 'LongFast')
+  const [region, setRegion] = useStoredState('arsn.lora.region', 'US')
+  const [txPower, setTxPower] = useStoredState('arsn.lora.txPower', '20')
+  const [hopLimit, setHopLimit] = useStoredState('arsn.lora.hopLimit', '3')
+  const [nodeLong, setNodeLong] = useStoredState('arsn.lora.nodeLong', 'KD9LMX ARSN Node')
+  const [nodeShort, setNodeShort] = useStoredState('arsn.lora.nodeShort', 'ARSN')
   const msgEndRef = useRef<HTMLDivElement>(null)
 
   const sigColor = (rssi: number) => rssi > -90 ? '#4ade80' : rssi > -110 ? '#fbbf24' : '#ef4444'
@@ -1940,9 +1992,9 @@ function LoRaSection() {
 // ─── Wiki Section ────────────────────────────────────────────────────────────
 
 function WikiSection() {
-  const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState<WikiArticle | null>(null)
-  const [category, setCategory] = useState('All')
+  const [search, setSearch] = useStoredState('arsn.wiki.search', '')
+  const [selectedId, setSelectedId] = useStoredState<number | null>('arsn.wiki.selectedId', null)
+  const [category, setCategory] = useStoredState('arsn.wiki.category', 'All')
 
   const categories = ['All', ...Array.from(new Set(WIKI_ARTICLES.map(a => a.category)))]
   const filtered = WIKI_ARTICLES.filter(a => {
@@ -1950,6 +2002,7 @@ function WikiSection() {
     const inCat = category === 'All' || a.category === category
     return inSearch && inCat
   })
+  const selected = WIKI_ARTICLES.find(a => a.id === selectedId) ?? null
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -1989,7 +2042,7 @@ function WikiSection() {
                 background: selected?.id === a.id ? '#111d11' : 'transparent',
                 borderLeft: `2px solid ${selected?.id === a.id ? '#4ade80' : 'transparent'}`
               }}
-              onClick={() => setSelected(a)}
+              onClick={() => setSelectedId(a.id)}
             >
               <div className="font-mono text-xs mb-1" style={{ color: selected?.id === a.id ? '#d1fae5' : '#86efac' }}>
                 {a.title}
@@ -2052,7 +2105,7 @@ function WikiSection() {
                 <button key={a.id}
                   className="wiki-card rounded p-4 text-left"
                   style={{ background: '#0a0d0a' }}
-                  onClick={() => setSelected(a)}>
+                  onClick={() => setSelectedId(a.id)}>
                   <div className="font-display text-xs mb-1" style={{ color: '#2d6a2d', fontSize: 9, letterSpacing: '0.08em' }}>
                     {a.category.toUpperCase()}
                   </div>
@@ -2071,10 +2124,10 @@ function WikiSection() {
 // ─── Tools Section ───────────────────────────────────────────────────────────
 
 function ToolsSection() {
-  const [tab, setTab] = useState<'bandplan' | 'phonetic' | 'qcodes' | 'freqcalc' | 'maidenhead'>('bandplan')
-  const [freqInput, setFreqInput] = useState('14200')
-  const [callInput, setCallInput] = useState('')
-  const [gridInput, setGridInput] = useState('DM79')
+  const [tab, setTab] = useStoredState<'bandplan' | 'phonetic' | 'qcodes' | 'freqcalc' | 'maidenhead'>('arsn.tools.tab', 'bandplan')
+  const [freqInput, setFreqInput] = useStoredState('arsn.tools.freqInput', '14200')
+  const [callInput, setCallInput] = useStoredState('arsn.tools.callInput', '')
+  const [gridInput, setGridInput] = useStoredState('arsn.tools.gridInput', 'DM79')
 
   const freqMHz = parseFloat(freqInput) || 0
   const wavelength = freqMHz > 0 ? (300 / freqMHz).toFixed(2) : '—'
@@ -3179,8 +3232,8 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: string }[] = [
 ]
 
 export default function App() {
-  const [section, setSection] = useState<NavSection>('radio')
-  const [callsign, setCallsign] = useState('KD9LMX')
+  const [section, setSection] = useStoredState<NavSection>('arsn.nav.section', 'radio')
+  const [callsign, setCallsign] = useStoredState('arsn.operator.callsign', 'KD9LMX')
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#080c08', overflow: 'hidden' }}>
