@@ -33,6 +33,8 @@ Implemented so far:
 - Extracted local mesh seed collections into `src/meshSeedData.ts`
 - Radio cockpit indicators now reflect live values (RX/TX, S-meter, RF power, mesh health, and status bar frequency/mode/power)
 - Active tuning step (1Hz/10Hz/100Hz/1kHz) and active VFO now drive knob tuning and mode/frequency entry behavior
+- Radio S-meter and spectrum scope now derive from a deterministic frequency-proximity signal model instead of random placeholder values
+- LOCK, MEMO, SCAN (up/down/off), and VOX controls now execute real cockpit actions
 
 ## Run Locally
 
