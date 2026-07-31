@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { getAllowedBands, getRadioCountryProfile, RADIO_COUNTRY_PROFILES } from './radioRestrictions'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -310,11 +311,39 @@ const RADIO_CONNECTIONS = [
   'Hamlib / rigctld', 'RigPi (MFJ)', 'Direct (No CAT)',
 ]
 
-function TopBar({ section, callsign, onCallsignChange }: { section: NavSection; callsign: string; onCallsignChange: (v: string) => void }) {
+function TopBar({
+  section,
+  callsign,
+  onCallsignChange,
+  country,
+  onCountryChange,
+  license,
+  onLicenseChange,
+  emergencyOverride,
+  onEmergencyOverrideChange,
+}: {
+  section: NavSection
+  callsign: string
+  onCallsignChange: (v: string) => void
+  country: string
+  onCountryChange: (v: string) => void
+  license: string
+  onLicenseChange: (v: string) => void
+  emergencyOverride: boolean
+  onEmergencyOverrideChange: (v: boolean) => void
+}) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(callsign)
   const [conn, setConn] = useStoredState('arsn.radio.connection', 'Icom USB Control (CI-V)')
   const [connected, setConnected] = useState(false)
+  const countryProfile = getRadioCountryProfile(country)
+
+  useEffect(() => {
+    if (!countryProfile.licenses.includes(license)) {
+      onLicenseChange(countryProfile.defaultLicense)
+    }
+  }, [country, countryProfile, license, onLicenseChange])
+
   const commit = () => {
     const v = draft.trim().toUpperCase()
     if (v) onCallsignChange(v)
@@ -359,6 +388,36 @@ function TopBar({ section, callsign, onCallsignChange }: { section: NavSection; 
               }}>
               {connected ? 'DISCONNECT' : 'CONNECT'}
             </button>
+            <select
+              value={country}
+              onChange={e => onCountryChange(e.target.value)}
+              className="font-mono text-xs px-2 py-0.5 rounded"
+              title="Country"
+              style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 10, outline: 'none', cursor: 'pointer', maxWidth: 132 }}
+            >
+              {Object.keys(RADIO_COUNTRY_PROFILES).map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+            <select
+              value={license}
+              onChange={e => onLicenseChange(e.target.value)}
+              className="font-mono text-xs px-2 py-0.5 rounded"
+              title="License"
+              style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 10, outline: 'none', cursor: 'pointer', maxWidth: 120 }}
+            >
+              {countryProfile.licenses.map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+            <label
+              className="flex items-center gap-1 font-display text-xs px-2 py-0.5 rounded"
+              title="Emergency override"
+              style={{ background: emergencyOverride ? '#fbbf2414' : '#0a1208', border: `1px solid ${emergencyOverride ? '#fbbf24' : '#1a2e1a'}`, color: emergencyOverride ? '#fbbf24' : '#2d6a2d', fontSize: 9, letterSpacing: '0.06em', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={emergencyOverride}
+                onChange={e => onEmergencyOverrideChange(e.target.checked)}
+                style={{ accentColor: '#fbbf24' }}
+              />
+              BYPASS
+            </label>
           </div>
         )}
       </div>
@@ -2578,6 +2637,13 @@ const BAND_FREQS: Record<string, number> = {
   '33cm': 915000, '23cm': 1296000,
 }
 
+interface SavedFrequency {
+  id: number
+  label: string
+  freqKhz: number
+  mode: string
+}
+
 function SMeter({ level }: { level: number }) {
   // level 0–9 (S units) + 10, 20, 40, 60 over S9
   const segments = [1,2,3,4,5,6,7,8,9,'10','20','40','60']
@@ -2841,7 +2907,7 @@ function VFOKnob({ onChange }: { onChange: (delta: number) => void }) {
   )
 }
 
-function RadioSection() {
+function RadioSection({ country, license, emergencyOverride }: { country: string; license: string; emergencyOverride: boolean }) {
   const [freqKhz, setFreqKhz] = useStoredState('arsn.radio.freqKhz', 14200)
   const [subFreqKhz, setSubFreqKhz] = useStoredState('arsn.radio.subFreqKhz', 7074)
   const [mode, setMode] = useStoredState('arsn.radio.mode', 'USB')
@@ -2863,6 +2929,11 @@ function RadioSection() {
   const [tunerOn, setTunerOn] = useStoredState('arsn.radio.tunerOn', false)
   const [morseOpen, setMorseOpen] = useState(false)
   const [morseCount] = useState(3)
+  const [savedFrequencies, setSavedFrequencies] = useStoredState<SavedFrequency[]>('arsn.radio.savedFrequencies', [
+    { id: 1, label: '20m DX', freqKhz: 14200, mode: 'USB' },
+    { id: 2, label: '40m NVIS', freqKhz: 7250, mode: 'LSB' },
+    { id: 3, label: '2m FM', freqKhz: 146520, mode: 'FM' },
+  ])
 
   // Animate S-meter
   useEffect(() => {
@@ -2892,6 +2963,29 @@ function RadioSection() {
     else if (BAND_FREQS[b] < 10000) setMode('LSB')
     else setMode('USB')
   }
+
+  const saveCurrentFrequency = () => {
+    const nextLabel = `${band} ${mode}`
+    setSavedFrequencies(prev => {
+      const existing = prev.find(entry => entry.freqKhz === freqKhz && entry.mode === mode)
+      if (existing) {
+        return prev.map(entry => entry.id === existing.id ? { ...entry, label: nextLabel } : entry)
+      }
+      return [{ id: Date.now(), label: nextLabel, freqKhz, mode }, ...prev].slice(0, 8)
+    })
+  }
+
+  const recallFrequency = (entry: SavedFrequency) => {
+    setFreqKhz(entry.freqKhz)
+    setMode(entry.mode)
+    setBand(Object.keys(BAND_FREQS).find(b => BAND_FREQS[b] === entry.freqKhz) || band)
+  }
+
+  const removeSavedFrequency = (id: number) => {
+    setSavedFrequencies(prev => prev.filter(entry => entry.id !== id))
+  }
+
+  const allowedBands = getAllowedBands(country, license)
 
   const fmtFreq = (khz: number) => {
     const mhz = (khz / 1000).toFixed(3)
@@ -3003,14 +3097,17 @@ function RadioSection() {
             <div className="flex flex-col gap-1">
               {BANDS.map(b => (
                 <button key={b}
-                  onClick={() => selectBand(b)}
+                  onClick={() => { if (emergencyOverride || allowedBands.includes(b)) selectBand(b) }}
+                  disabled={!emergencyOverride && !allowedBands.includes(b)}
                   className="font-display text-xs px-2 py-1 rounded transition-all"
                   style={{
-                    background: band === b ? '#162016' : '#0a1208',
-                    border: `1px solid ${band === b ? '#4ade80' : '#1a2e1a'}`,
-                    color: band === b ? '#4ade80' : '#2d6a2d',
+                    background: !emergencyOverride && !allowedBands.includes(b) ? '#081008' : band === b ? '#162016' : '#0a1208',
+                    border: `1px solid ${band === b && (emergencyOverride || allowedBands.includes(b)) ? '#4ade80' : !emergencyOverride && !allowedBands.includes(b) ? '#1b1f1b' : '#1a2e1a'}`,
+                    color: !emergencyOverride && !allowedBands.includes(b) ? '#374151' : band === b ? '#4ade80' : '#2d6a2d',
                     fontSize: 9, letterSpacing: '0.04em', textAlign: 'center',
-                    boxShadow: band === b ? '0 0 6px #4ade8030' : 'none',
+                    boxShadow: band === b && (emergencyOverride || allowedBands.includes(b)) ? '0 0 6px #4ade8030' : 'none',
+                    opacity: !emergencyOverride && !allowedBands.includes(b) ? 0.45 : 1,
+                    cursor: !emergencyOverride && !allowedBands.includes(b) ? 'not-allowed' : 'pointer',
                   }}>
                   {b}
                 </button>
@@ -3158,6 +3255,49 @@ function RadioSection() {
             <SMeter level={sMeter} />
             <PowerMeter level={power} />
 
+            <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 4, padding: '6px 8px' }}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-display text-xs" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>
+                  SAVED FREQS
+                </div>
+                <button
+                  onClick={saveCurrentFrequency}
+                  className="font-display text-xs px-2 py-0.5 rounded"
+                  style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4ade80', fontSize: 8, letterSpacing: '0.06em' }}>
+                  SAVE CURRENT
+                </button>
+              </div>
+              <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                {savedFrequencies.map(entry => (
+                  <div key={entry.id} className="flex items-center gap-2 rounded px-2 py-1"
+                    style={{ background: '#0a1208', border: '1px solid #1a2e1a' }}>
+                    <button
+                      onClick={() => recallFrequency(entry)}
+                      className="flex-1 text-left"
+                      style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
+                      <div className="font-display" style={{ color: '#4ade80', fontSize: 8, letterSpacing: '0.08em' }}>
+                        {entry.label}
+                      </div>
+                      <div className="font-mono" style={{ color: '#86efac', fontSize: 10 }}>
+                        {entry.freqKhz.toLocaleString('en-US')} kHz · {entry.mode}
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => removeSavedFrequency(entry.id)}
+                      className="font-display text-xs px-1.5 py-0.5 rounded"
+                      style={{ background: '#1a0808', border: '1px solid #4a1a1a', color: '#ef4444', fontSize: 8 }}>
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {savedFrequencies.length === 0 && (
+                  <div className="font-mono text-xs" style={{ color: '#2d6a2d' }}>
+                    No saved frequencies yet.
+                  </div>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -3234,6 +3374,9 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: string }[] = [
 export default function App() {
   const [section, setSection] = useStoredState<NavSection>('arsn.nav.section', 'radio')
   const [callsign, setCallsign] = useStoredState('arsn.operator.callsign', 'KD9LMX')
+  const [country, setCountry] = useStoredState('arsn.radio.country', 'United States')
+  const [license, setLicense] = useStoredState('arsn.radio.license', 'General')
+  const [emergencyOverride, setEmergencyOverride] = useStoredState('arsn.radio.emergencyOverride', false)
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#080c08', overflow: 'hidden' }}>
@@ -3304,9 +3447,19 @@ export default function App() {
 
         {/* Main panel */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          <TopBar section={section} callsign={callsign} onCallsignChange={setCallsign} />
+          <TopBar
+            section={section}
+            callsign={callsign}
+            onCallsignChange={setCallsign}
+            country={country}
+            onCountryChange={setCountry}
+            license={license}
+            onLicenseChange={setLicense}
+            emergencyOverride={emergencyOverride}
+            onEmergencyOverrideChange={setEmergencyOverride}
+          />
           <div className="flex flex-1 overflow-hidden" style={{ background: '#080c08' }}>
-            {section === 'radio' && <RadioSection />}
+            {section === 'radio' && <RadioSection country={country} license={license} emergencyOverride={emergencyOverride} />}
             {section === 'channels' && <ChannelsSection />}
             {section === 'mail' && <MailSection />}
             {section === 'lora' && <LoRaSection />}

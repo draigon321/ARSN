@@ -19,6 +19,8 @@ Implemented so far:
 
 - Persistent top-level section selection and operator callsign
 - Persistent transceiver connection choice, tuning state, and receiver controls
+- Persistent saved-frequency quick list in the radio panel
+- Persistent country/license radio restrictions with emergency override
 - Persistent mail inbox, compose draft, and message actions
 - Reply, forward, and delete actions in mail
 - Persistent wiki search and selection state
@@ -58,6 +60,8 @@ Planned work should focus on replacing the remaining mock data with real storage
 - Import/export or sync layer for offline wiki content
 - Device and node discovery for actual radio and mesh hardware
 - Auth, operator profiles, and node-level configuration persistence
+
+Radio access rules are stored in `src/radioRestrictions.ts` so band policy can be updated without changing the main cockpit component.
 
 ## Notes
 
