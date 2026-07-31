@@ -3,6 +3,8 @@ import { BAND_FREQS, getAllowedBands, getAllowedModes, getBandForFrequency, getF
 import { CHANNEL_MESSAGES, MAIL_MESSAGES, WIKI_ARTICLES } from './appSeedData'
 import { MESH_CHANNELS_INIT, MESH_MESSAGES, MESH_NODES } from './meshSeedData'
 import { DEFAULT_SIGNAL_SOURCES } from './radioSignalSources'
+import { getBridgeStatus, injectBridgeRx, pullBridgeRx, sendBridgeTx } from './bridge/client'
+import type { BridgeRxEvent, BridgeStatusSnapshot } from './bridge/types'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -2934,7 +2936,7 @@ function VFOKnob({ onChange }: { onChange: (delta: number) => void }) {
   )
 }
 
-function RadioSection({ country, license, emergencyOverride, onTelemetryChange }: { country: string; license: string; emergencyOverride: boolean; onTelemetryChange: (telemetry: RadioTelemetry) => void }) {
+function RadioSection({ callsign, country, license, emergencyOverride, onTelemetryChange }: { callsign: string; country: string; license: string; emergencyOverride: boolean; onTelemetryChange: (telemetry: RadioTelemetry) => void }) {
   const [freqKhz, setFreqKhz] = useStoredState('arsn.radio.freqKhz', 14200)
   const [subFreqKhz, setSubFreqKhz] = useStoredState('arsn.radio.subFreqKhz', 7074)
   const [mode, setMode] = useStoredState('arsn.radio.mode', 'USB')
@@ -2974,6 +2976,11 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
   const [voxLatchedTx, setVoxLatchedTx] = useState(false)
   const signalSources = DEFAULT_SIGNAL_SOURCES
   const [lastControlAction, setLastControlAction] = useState('READY')
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatusSnapshot | null>(null)
+  const [bridgeLastRxEvent, setBridgeLastRxEvent] = useState<BridgeRxEvent | null>(null)
+  const [bridgeError, setBridgeError] = useState<string | null>(null)
+  const bridgeCursorRef = useRef(0)
+  const previousTxModeRef = useRef(false)
   const frequencyBounds = getFrequencyBounds()
   const meshOnlineCount = MESH_NODES.filter(node => node.isOnline).length
   const activeFreqKhz = vfoA ? freqKhz : subFreqKhz
@@ -3167,6 +3174,97 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
     setSpectrumSpanKhz(prev => {
       const next = functionKeys[(functionKeys.indexOf(prev) + 1) % functionKeys.length]
       return next
+    })
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    let inFlight = false
+
+    const poll = async () => {
+      if (cancelled || inFlight) return
+      inFlight = true
+      try {
+        const payload = await pullBridgeRx(bridgeCursorRef.current)
+        if (cancelled) return
+        if (payload.events.length > 0) {
+          const newest = payload.events[payload.events.length - 1]
+          bridgeCursorRef.current = payload.cursor
+          setBridgeLastRxEvent(newest)
+          setBridgeError(null)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBridgeError(error instanceof Error ? error.message : 'Bridge RX polling failed')
+        }
+      } finally {
+        inFlight = false
+      }
+    }
+
+    const id = setInterval(poll, 100)
+    void poll()
+
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const pollStatus = async () => {
+      try {
+        const snapshot = await getBridgeStatus()
+        if (!cancelled) {
+          setBridgeStatus(snapshot)
+          setBridgeError(null)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBridgeError(error instanceof Error ? error.message : 'Bridge status request failed')
+        }
+      }
+    }
+
+    const id = setInterval(pollStatus, 1000)
+    void pollStatus()
+
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  useEffect(() => {
+    const txStarted = effectiveTxMode && !previousTxModeRef.current
+    previousTxModeRef.current = effectiveTxMode
+    if (!txStarted) return
+
+    void sendBridgeTx({
+      callsign,
+      mode: txModeName,
+      freqKhz: activeFreqKhz,
+      vfo: txVfo,
+      txStartedAt: Date.now(),
+      txDurationMs: 900,
+      rfGain,
+      micGain,
+      noiseFloor,
+      note: `PTT ${txModeName} ${activeFreqKhz}kHz`,
+    }).then(() => {
+      setBridgeError(null)
+    }).catch(error => {
+      setBridgeError(error instanceof Error ? error.message : 'Bridge TX submission failed')
+    })
+  }, [activeFreqKhz, callsign, effectiveTxMode, micGain, noiseFloor, rfGain, txModeName, txVfo])
+
+  const handleBridgeInject = () => {
+    void injectBridgeRx().then(() => {
+      setBridgeError(null)
+    }).catch(error => {
+      setBridgeError(error instanceof Error ? error.message : 'Bridge inject failed')
     })
   }
 
@@ -3526,6 +3624,22 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
             <div className="font-mono text-xs" style={{ color: '#1f4a1f', marginTop: 4 }}>
               Last control: {lastControlAction}
             </div>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <span className="font-mono text-xs" style={{ color: bridgeError ? '#ef4444' : '#2d6a2d' }}>
+                BRIDGE {bridgeError ? 'OFFLINE' : 'ONLINE'} · CURSOR {bridgeCursorRef.current} · LAST RX {bridgeLastRxEvent ? `${bridgeLastRxEvent.mode} ${bridgeLastRxEvent.freqKhz}kHz` : '—'}
+              </span>
+              <span className="font-mono text-xs" style={{ color: '#1f4a1f' }}>
+                {bridgeStatus ? `TXQ ${bridgeStatus.txDepth} RXQ ${bridgeStatus.rxDepth}` : 'SYNCING...'}
+              </span>
+              <button
+                type="button"
+                onClick={handleBridgeInject}
+                className="font-display text-xs px-2 py-1 rounded"
+                style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#22d3ee', letterSpacing: '0.08em' }}
+              >
+                INJECT RX
+              </button>
+            </div>
 
             {/* Direct Frequency Entry */}
             <div style={{ borderTop: '1px solid #1a2e1a', paddingTop: 10, marginTop: 4 }}
@@ -3767,7 +3881,7 @@ export default function App() {
             netStatus={radioTelemetry.frequencyAllowed && meshHealthy}
           />
           <div className="flex flex-1 overflow-hidden" style={{ background: '#080c08' }}>
-            {section === 'radio' && <RadioSection country={country} license={license} emergencyOverride={emergencyOverride} onTelemetryChange={setRadioTelemetry} />}
+            {section === 'radio' && <RadioSection callsign={callsign} country={country} license={license} emergencyOverride={emergencyOverride} onTelemetryChange={setRadioTelemetry} />}
             {section === 'channels' && <ChannelsSection />}
             {section === 'mail' && <MailSection />}
             {section === 'lora' && <LoRaSection />}
