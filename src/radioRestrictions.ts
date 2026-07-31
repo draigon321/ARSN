@@ -106,3 +106,16 @@ export function getAllowedModes(country: string, license: string, band: string):
   if (!allowedBands.includes(band)) return []
   return getBandRule(band)?.modes ?? []
 }
+
+export function isFrequencyAllowed(country: string, license: string, freqKhz: number): boolean {
+  const band = getBandForFrequency(freqKhz)
+  if (!band) return false
+  return getAllowedBands(country, license).includes(band)
+}
+
+export function getFrequencyBounds(): { minKhz: number; maxKhz: number } {
+  return {
+    minKhz: RADIO_BAND_RULES[0]?.minKhz ?? 0,
+    maxKhz: RADIO_BAND_RULES[RADIO_BAND_RULES.length - 1]?.maxKhz ?? 0,
+  }
+}

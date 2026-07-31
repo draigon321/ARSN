@@ -22,6 +22,7 @@ Implemented so far:
 - Persistent saved-frequency quick list in the radio panel
 - Persistent country/license radio restrictions with emergency override
 - Band and mode availability is driven from `src/radioRestrictions.ts`
+- Frequency entry and tuning now validate against the same local rule file
 - Persistent mail inbox, compose draft, and message actions
 - Reply, forward, and delete actions in mail
 - Persistent wiki search and selection state

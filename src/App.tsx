@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { getAllowedBands, getAllowedModes, getBandForFrequency, getRadioCountryProfile, RADIO_COUNTRY_PROFILES } from './radioRestrictions'
+import { getAllowedBands, getAllowedModes, getBandForFrequency, getFrequencyBounds, getRadioCountryProfile, RADIO_COUNTRY_PROFILES, isFrequencyAllowed } from './radioRestrictions'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -2934,6 +2934,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
     { id: 2, label: '40m NVIS', freqKhz: 7250, mode: 'LSB' },
     { id: 3, label: '2m FM', freqKhz: 146520, mode: 'FM' },
   ])
+  const frequencyBounds = getFrequencyBounds()
 
   // Animate S-meter
   useEffect(() => {
@@ -2953,7 +2954,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
   }, [txMode])
 
   const handleVfoTurn = (delta: number) => {
-    setFreqKhz(prev => Math.max(1800, Math.min(54000, prev + delta)))
+    setFreqKhz(prev => Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, prev + delta)))
   }
 
   const selectBand = (b: string) => {
@@ -3001,6 +3002,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
 
   const allowedBands = getAllowedBands(country, license)
   const allowedModes = getAllowedModes(country, license, band)
+  const frequencyAllowed = emergencyOverride || isFrequencyAllowed(country, license, freqKhz)
 
   const fmtFreq = (khz: number) => {
     const mhz = (khz / 1000).toFixed(3)
@@ -3248,14 +3250,14 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
               <input
                 type="number"
                 className="px-2 py-1 rounded font-mono text-sm"
-                style={{ background: '#020602', border: '1px solid #1f3320', color: '#4ade80', width: 110 }}
+                style={{ background: '#020602', border: `1px solid ${frequencyAllowed ? '#1f3320' : '#ef4444'}`, color: frequencyAllowed ? '#4ade80' : '#fca5a5', width: 110 }}
                 value={freqKhz}
-                onChange={e => setFreqKhz(Math.max(1800, Math.min(54000, +e.target.value)))}
+                onChange={e => setFreqKhz(Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, +e.target.value)))}
               />
               <div className="flex gap-1 flex-wrap">
                 {[[-100, '-100'], [-10, '-10'], [-1, '-1'], [1, '+1'], [10, '+10'], [100, '+100']].map(([delta, label]) => (
                   <button key={label}
-                    onClick={() => setFreqKhz(f => Math.max(1800, Math.min(54000, f + +delta)))}
+                    onClick={() => setFreqKhz(f => Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, f + +delta)))}
                     className="font-display text-xs px-2 py-1 rounded"
                     style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#2d6a2d', fontSize: 9 }}>
                     {label}
@@ -3265,6 +3267,9 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
               <span className="font-mono text-xs ml-auto" style={{ color: '#2d6a2d' }}>
                 λ = {freqKhz > 0 ? (300000 / freqKhz).toFixed(2) : '—'} m
               </span>
+            </div>
+            <div className="font-mono text-xs" style={{ color: frequencyAllowed ? '#2d6a2d' : '#ef4444', marginTop: 4 }}>
+              {frequencyAllowed ? `Allowed on ${band} for ${license} / ${country}` : emergencyOverride ? 'Emergency override active' : `Not allowed for ${license} in ${country}`}
             </div>
           </div>
 
