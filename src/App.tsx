@@ -3168,10 +3168,6 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
     })
   }
 
-  const recallPreset = (freq: number, presetMode: string) => {
-    tuneToFrequency(freq, presetMode)
-  }
-
   useEffect(() => {
     onTelemetryChange({
       txMode: effectiveTxMode,
@@ -3223,31 +3219,6 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
         minWidth: 44,
       }}
     >
-      {label}
-    </button>
-  )
-
-  const FnButton = ({ label, active, onClick }: { label: string; active?: boolean; onClick?: () => void }) => (
-    <button
-      type="button"
-      onPointerDown={event => {
-        event.preventDefault()
-        activateControl(label, onClick)
-      }}
-      onKeyDown={event => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          activateControl(label, onClick)
-        }
-      }}
-      className="font-display text-xs py-2 rounded-sm flex-1 transition-all"
-      style={{
-        background: active ? '#162016' : '#0a1208',
-        border: `1px solid ${active ? '#4ade80' : '#1a2e1a'}`,
-        color: active ? '#4ade80' : '#1f4a1f',
-        fontSize: 9, letterSpacing: '0.06em',
-        boxShadow: active ? '0 0 6px #4ade8020' : 'none',
-      }}>
       {label}
     </button>
   )
@@ -3507,18 +3478,28 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
               ))}
             </div>
 
+            {/* Function strip */}
+            <div style={{ borderTop: '1px solid #1a2e1a', paddingTop: 10, marginTop: 4 }}>
+              <div className="font-display text-xs mb-2" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>FUNCTION</div>
+              <div className="flex gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
+                <CtrlButton label="SPAN" active onClick={cycleSpan} />
+                <CtrlButton label="ATT" active={att !== 'OFF'} onClick={() => setAtt(a => a === 'OFF' ? '10dB' : a === '10dB' ? '20dB' : 'OFF')} />
+                <CtrlButton label="MARKER" active={spectrumMarker} onClick={() => setSpectrumMarker(p => !p)} />
+                <CtrlButton label="HOLD" active={spectrumHold} onClick={() => setSpectrumHold(p => !p)} />
+                <CtrlButton label={fixedTuning ? 'FIXED' : 'CENT'} active={fixedTuning} onClick={() => setFixedTuning(p => !p)} />
+              </div>
+            </div>
+
             {/* Signal Controls */}
             <div style={{ borderTop: '1px solid #1a2e1a', paddingTop: 10, marginTop: 4 }}>
               <div className="font-display text-xs mb-2" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>SIGNAL CONTROLS</div>
-              <div className="flex flex-wrap gap-1.5 mb-2">
+              <div className="flex gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
                 <CtrlButton label="NB" active={nb} onClick={() => setNb(p => !p)} />
                 <CtrlButton label="NR" active={nr} onClick={() => setNr(p => !p)} />
                 <CtrlButton label={`AGC:${agc}`} active onClick={() => setAgc(a => a === 'FAST' ? 'MID' : a === 'MID' ? 'SLOW' : 'FAST')} />
                 <CtrlButton label={`ATT:${att}`} active={att !== 'OFF'} onClick={() => setAtt(a => a === 'OFF' ? '10dB' : a === '10dB' ? '20dB' : 'OFF')} color="#fbbf24" />
                 <CtrlButton label="SPLIT" active={split} onClick={() => setSplit(p => !p)} color="#22d3ee" />
                 <CtrlButton label="TUNER" active={tunerOn} onClick={() => setTunerOn(p => !p)} color="#fbbf24" />
-              </div>
-              <div className="flex flex-wrap gap-1.5">
                 <CtrlButton label="LOCK" active={lockTuning} onClick={() => setLockTuning(p => !p)} color="#fbbf24" />
                 <CtrlButton label="MEMO" onClick={() => {
                   const label = window.prompt('Label for memo frequency', `${band} ${activeMode}`)
@@ -3578,7 +3559,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
 
           {/* Right: meters + signal controls */}
           <div className="flex flex-col gap-2" style={{ minWidth: 200 }}>
-            <SMeter level={sMeter} modeLabel={`${effectiveTxMode ? 'TX' : 'RX'} VFO-${effectiveTxMode ? txVfo : rxVfo}`} />
+            <SMeter level={sMeter} modeLabel={`TX VFO-${txVfo}`} />
             <PowerMeter level={power} />
 
             <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 4, padding: '6px 8px' }}>
@@ -3629,29 +3610,6 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
 
         {/* ── SPECTRUM SCOPE + WATERFALL ── */}
             <SpectrumScope centerKhz={rxFreqKhz} txMode={txMode || voxLatchedTx} spanKhz={spectrumSpanKhz} hold={spectrumHold} markerOn={spectrumMarker} fixedTuning={fixedTuning || lockTuning} signals={visibleSignals.map(signal => ({ offsetKhz: signal.offsetKhz, strength: Math.min(9.5, signal.rawStrength) }))} noiseFloor={noiseFloor} rxVfo={rxVfo} />
-
-        {/* ── FUNCTION KEY ROW ── */}
-        <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 6, padding: '8px 12px' }}>
-          <div className="font-display text-xs mb-2" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>FUNCTION</div>
-          <div className="flex gap-1.5">
-            <FnButton label="SPAN" active onClick={cycleSpan} />
-            <FnButton label="ATT" active={att !== 'OFF'} onClick={() => setAtt(a => a === 'OFF' ? '10dB' : a === '10dB' ? '20dB' : 'OFF')} />
-            <FnButton label="MARKER" active={spectrumMarker} onClick={() => setSpectrumMarker(p => !p)} />
-            <FnButton label="HOLD" active={spectrumHold} onClick={() => setSpectrumHold(p => !p)} />
-            <FnButton label={fixedTuning ? 'FIXED' : 'CENT'} active={fixedTuning} onClick={() => setFixedTuning(p => !p)} />
-            <FnButton label={vfoA ? 'MAIN' : 'SUB'} active onClick={() => setVfoA(p => !p)} />
-            <FnButton label="SET" active onClick={saveCurrentFrequency} />
-            <div style={{ width: 1, background: '#1a2e1a', margin: '0 4px' }} />
-            <FnButton label="F-1" active onClick={() => recallPreset(14074, 'FT8')} />
-            <FnButton label="F-2" active onClick={() => recallPreset(14300, 'USB')} />
-            <FnButton label="F-3" active onClick={() => recallPreset(7250, 'LSB')} />
-            <FnButton label="F-4" active onClick={() => recallPreset(3985, 'LSB')} />
-            <FnButton label="F-5" active onClick={() => recallPreset(146520, 'FM')} />
-            <FnButton label="F-6" active onClick={() => recallPreset(446000, 'FM')} />
-            <FnButton label="F-7" active onClick={() => recallPreset(28500, 'USB')} />
-          </div>
-        </div>
-
 
       </div>
       {/* Floating Morse button */}
