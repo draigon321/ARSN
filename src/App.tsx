@@ -2942,6 +2942,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
   const [band, setBand] = useStoredState('arsn.radio.band', '20m')
   const [txMode, setTxMode] = useState(false)
   const [sMeter, setSMeter] = useState(7)
+  const [txSMeter, setTxSMeter] = useState(0)
   const [power, setPower] = useState(0)
   const [agc, setAgc] = useStoredState('arsn.radio.agc', 'MID')
   const [att, setAtt] = useStoredState('arsn.radio.att', 'OFF')
@@ -3060,9 +3061,10 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
         const targetPower = Math.min(100, Math.max(6, micGain + (txModeName === 'FM' ? 8 : 0) + (tunerOn ? 4 : 0)))
         const targetTxSMeter = Math.max(1, Math.min(9.8, targetPower / 12))
         setPower(prev => prev + (targetPower - prev) * 0.4)
-        setSMeter(prev => prev + (targetTxSMeter - prev) * 0.35)
+        setTxSMeter(prev => prev + (targetTxSMeter - prev) * 0.35)
       } else {
         setPower(prev => prev * 0.3)
+        setTxSMeter(0)
         setSMeter(prev => prev + (signalTarget - prev) * 0.28)
       }
     }, 150)
@@ -3559,7 +3561,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
 
           {/* Right: meters + signal controls */}
           <div className="flex flex-col gap-2" style={{ minWidth: 200 }}>
-            <SMeter level={sMeter} modeLabel={`TX VFO-${txVfo}`} />
+            <SMeter level={txSMeter} modeLabel={`TX VFO-${txVfo}`} />
             <PowerMeter level={power} />
 
             <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 4, padding: '6px 8px' }}>
