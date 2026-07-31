@@ -4,7 +4,7 @@ import { CHANNEL_MESSAGES, MAIL_MESSAGES, WIKI_ARTICLES } from './appSeedData'
 import { MESH_CHANNELS_INIT, MESH_MESSAGES, MESH_NODES } from './meshSeedData'
 import { DEFAULT_SIGNAL_SOURCES } from './radioSignalSources'
 import { getBridgeStatus, injectBridgeRx, pullBridgeRx, sendBridgeTx } from './bridge/client'
-import type { BridgeRxEvent, BridgeStatusSnapshot } from './bridge/types'
+import type { BridgeAnalogPayload, BridgeRxEvent, BridgeRxFrame, BridgeStatusSnapshot } from './bridge/types'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -2978,8 +2978,21 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const [lastControlAction, setLastControlAction] = useState('READY')
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatusSnapshot | null>(null)
   const [bridgeLastRxEvent, setBridgeLastRxEvent] = useState<BridgeRxEvent | null>(null)
+  const [bridgePlaybackFrame, setBridgePlaybackFrame] = useState<BridgeRxFrame | null>(null)
+  const [bridgeBufferedFrames, setBridgeBufferedFrames] = useState(0)
+  const [bridgeJitterMs, setBridgeJitterMs] = useState(0)
+  const [bridgeRecording, setBridgeRecording] = useState(false)
+  const [bridgeRecordingEvents, setBridgeRecordingEvents] = useState<BridgeRxEvent[]>([])
+  const [bridgeReplayRate, setBridgeReplayRate] = useState<number | null>(null)
   const [bridgeError, setBridgeError] = useState<string | null>(null)
   const bridgeCursorRef = useRef(0)
+  const bridgeTxStartRef = useRef<number | null>(null)
+  const bridgePlaybackQueueRef = useRef<Array<{ event: BridgeRxEvent; frame: BridgeRxFrame; playAt: number }>>([])
+  const bridgePlaybackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bridgePlaybackClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bridgeReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bridgeRecordingRef = useRef(false)
+  const bridgeEnqueueRef = useRef<(events: BridgeRxEvent[], playbackRate?: number) => void>(() => undefined)
   const previousTxModeRef = useRef(false)
   const frequencyBounds = getFrequencyBounds()
   const meshOnlineCount = MESH_NODES.filter(node => node.isOnline).length
@@ -2992,6 +3005,42 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const rxFreqKhz = activeFreqKhz
   const rxMode = activeMode
   const txModeName = txVfo === 'A' ? mode : subMode
+
+  const makeTxAnalog = (durationMs: number): BridgeAnalogPayload => {
+    const sampleRateHz = 2000
+    const sampleCount = Math.max(1, Math.round(durationMs * sampleRateHz / 1000))
+    const amplitude = Math.max(0.02, Math.min(0.98, micGain / 100))
+    const modeToneHz = txModeName === 'CW' || txModeName === 'CWR' ? 700 : txModeName === 'FM' ? 220 : txModeName === 'AM' ? 180 : 310
+    let energy = 0
+    let peak = 0
+    let noiseState = 0x1a2b3c4d
+    const samples = Array.from({ length: sampleCount }, (_, index) => {
+      noiseState = (Math.imul(noiseState, 1664525) + 1013904223) >>> 0
+      const noise = (noiseState / 0xffffffff - 0.5) * 0.08
+      const seconds = index / sampleRateHz
+      const attack = Math.min(1, index / (sampleRateHz * 0.015))
+      const release = Math.min(1, (sampleCount - index) / (sampleRateHz * 0.025))
+      const speechLike = Math.sin(2 * Math.PI * modeToneHz * seconds)
+        + 0.42 * Math.sin(2 * Math.PI * (modeToneHz * 2.13) * seconds)
+        + 0.2 * Math.sin(2 * Math.PI * (modeToneHz * 3.71) * seconds)
+      const sample = Math.max(-1, Math.min(1, amplitude * attack * release * (speechLike / 1.62 + noise)))
+      const rounded = Number(sample.toFixed(5))
+      energy += rounded * rounded
+      peak = Math.max(peak, Math.abs(rounded))
+      return rounded
+    })
+
+    return {
+      domain: 'audio-baseband',
+      encoding: 'f32-normalized',
+      sampleRateHz,
+      samplePeriodUs: 1_000_000 / sampleRateHz,
+      channels: 1,
+      samples,
+      peak: Number(peak.toFixed(5)),
+      rms: Number(Math.sqrt(energy / samples.length).toFixed(5)),
+    }
+  }
 
   const [signalTarget, setSignalTarget] = useState(0)
   const [noiseFloor, setNoiseFloor] = useState(7)
@@ -3072,11 +3121,12 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
       } else {
         setPower(prev => prev * 0.3)
         setTxSMeter(0)
-        setSMeter(prev => prev + (signalTarget - prev) * 0.28)
+        const rxTarget = bridgePlaybackFrame?.strength ?? signalTarget
+        setSMeter(prev => prev + (rxTarget - prev) * 0.28)
       }
     }, 150)
     return () => clearInterval(id)
-  }, [effectiveTxMode, micGain, signalTarget, tunerOn, txModeName])
+  }, [bridgePlaybackFrame, effectiveTxMode, micGain, signalTarget, tunerOn, txModeName])
 
   useEffect(() => {
     if (!voxEnabled) {
@@ -3178,8 +3228,65 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   }
 
   useEffect(() => {
+    bridgeRecordingRef.current = bridgeRecording
+  }, [bridgeRecording])
+
+  useEffect(() => {
     let cancelled = false
     let inFlight = false
+
+    const schedulePlayback = () => {
+      if (cancelled || bridgePlaybackTimerRef.current || bridgePlaybackQueueRef.current.length === 0) return
+      const next = bridgePlaybackQueueRef.current[0]
+      const delay = Math.max(0, next.playAt - Date.now())
+      bridgePlaybackTimerRef.current = setTimeout(() => {
+        bridgePlaybackTimerRef.current = null
+        const due = bridgePlaybackQueueRef.current.shift()
+        if (due && !cancelled) {
+          setBridgeLastRxEvent(due.event)
+          setBridgePlaybackFrame(due.frame)
+          setBridgeBufferedFrames(bridgePlaybackQueueRef.current.length)
+          if (bridgePlaybackClearTimerRef.current) clearTimeout(bridgePlaybackClearTimerRef.current)
+          bridgePlaybackClearTimerRef.current = setTimeout(() => {
+            if (!cancelled && bridgePlaybackQueueRef.current.length === 0) {
+              setBridgePlaybackFrame(null)
+            }
+          }, due.event.frameIntervalMs * 2)
+        }
+        schedulePlayback()
+      }, delay)
+    }
+
+    const enqueueEvents = (events: BridgeRxEvent[], playbackRate = 1) => {
+      if (events.length === 0) return
+      const jitterMs = 40 + Math.floor(Math.random() * 41)
+      const sourceStart = events[0].generatedAt
+      const playbackStart = Date.now() + jitterMs
+
+      for (const event of events) {
+        if (bridgePlaybackClearTimerRef.current) {
+          clearTimeout(bridgePlaybackClearTimerRef.current)
+          bridgePlaybackClearTimerRef.current = null
+        }
+        const eventDelay = Math.max(0, event.generatedAt - sourceStart) / playbackRate
+        const queueTail = bridgePlaybackQueueRef.current.at(-1)
+        const eventPlaybackStart = Math.max(
+          playbackStart + eventDelay,
+          queueTail ? queueTail.playAt + event.frameIntervalMs / playbackRate : 0,
+        )
+        for (const frame of event.frames) {
+          bridgePlaybackQueueRef.current.push({
+            event,
+            frame,
+            playAt: eventPlaybackStart + frame.offsetMs / playbackRate,
+          })
+        }
+      }
+      setBridgeJitterMs(jitterMs)
+      setBridgeBufferedFrames(bridgePlaybackQueueRef.current.length)
+      schedulePlayback()
+    }
+    bridgeEnqueueRef.current = enqueueEvents
 
     const poll = async () => {
       if (cancelled || inFlight) return
@@ -3188,9 +3295,11 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
         const payload = await pullBridgeRx(bridgeCursorRef.current)
         if (cancelled) return
         if (payload.events.length > 0) {
-          const newest = payload.events[payload.events.length - 1]
           bridgeCursorRef.current = payload.cursor
-          setBridgeLastRxEvent(newest)
+          if (bridgeRecordingRef.current) {
+            setBridgeRecordingEvents(current => [...current, ...payload.events])
+          }
+          enqueueEvents(payload.events)
           setBridgeError(null)
         }
       } catch (error) {
@@ -3208,6 +3317,16 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     return () => {
       cancelled = true
       clearInterval(id)
+      if (bridgePlaybackTimerRef.current) {
+        clearTimeout(bridgePlaybackTimerRef.current)
+        bridgePlaybackTimerRef.current = null
+      }
+      if (bridgePlaybackClearTimerRef.current) {
+        clearTimeout(bridgePlaybackClearTimerRef.current)
+        bridgePlaybackClearTimerRef.current = null
+      }
+      bridgePlaybackQueueRef.current = []
+      bridgeEnqueueRef.current = () => undefined
     }
   }, [])
 
@@ -3239,19 +3358,29 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
 
   useEffect(() => {
     const txStarted = effectiveTxMode && !previousTxModeRef.current
+    const txStopped = !effectiveTxMode && previousTxModeRef.current
     previousTxModeRef.current = effectiveTxMode
-    if (!txStarted) return
+    if (txStarted) {
+      bridgeTxStartRef.current = Date.now()
+      return
+    }
+    if (!txStopped || bridgeTxStartRef.current === null) return
 
+    const txStartedAt = bridgeTxStartRef.current
+    bridgeTxStartRef.current = null
+    const txDurationMs = Math.max(100, Math.min(10000, Date.now() - txStartedAt))
+    const analog = makeTxAnalog(txDurationMs)
     void sendBridgeTx({
       callsign,
       mode: txModeName,
       freqKhz: activeFreqKhz,
       vfo: txVfo,
-      txStartedAt: Date.now(),
-      txDurationMs: 900,
+      txStartedAt,
+      txDurationMs,
       rfGain,
       micGain,
       noiseFloor,
+      analog,
       note: `PTT ${txModeName} ${activeFreqKhz}kHz`,
     }).then(() => {
       setBridgeError(null)
@@ -3267,6 +3396,43 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
       setBridgeError(error instanceof Error ? error.message : 'Bridge inject failed')
     })
   }
+
+  const toggleBridgeRecording = () => {
+    setBridgeRecording(current => {
+      if (!current) {
+        setBridgeRecordingEvents([])
+        setBridgeReplayRate(null)
+      }
+      return !current
+    })
+  }
+
+  const replayBridgeRecording = (playbackRate: number) => {
+    if (bridgeRecordingEvents.length === 0) return
+    if (bridgeReplayTimerRef.current) clearTimeout(bridgeReplayTimerRef.current)
+    bridgePlaybackQueueRef.current = []
+    if (bridgePlaybackTimerRef.current) {
+      clearTimeout(bridgePlaybackTimerRef.current)
+      bridgePlaybackTimerRef.current = null
+    }
+
+    setBridgeReplayRate(playbackRate)
+    bridgeEnqueueRef.current(bridgeRecordingEvents, playbackRate)
+
+    const first = bridgeRecordingEvents[0]
+    const last = bridgeRecordingEvents[bridgeRecordingEvents.length - 1]
+    const replayDuration = (Math.max(0, last.generatedAt - first.generatedAt) + last.durationMs) / playbackRate
+    bridgeReplayTimerRef.current = setTimeout(() => {
+      setBridgeReplayRate(null)
+      bridgeReplayTimerRef.current = null
+    }, replayDuration + 120)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (bridgeReplayTimerRef.current) clearTimeout(bridgeReplayTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     onTelemetryChange({
@@ -3629,7 +3795,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
                 BRIDGE {bridgeError ? 'OFFLINE' : 'ONLINE'} · CURSOR {bridgeCursorRef.current} · LAST RX {bridgeLastRxEvent ? `${bridgeLastRxEvent.mode} ${bridgeLastRxEvent.freqKhz}kHz` : '—'}
               </span>
               <span className="font-mono text-xs" style={{ color: '#1f4a1f' }}>
-                {bridgeStatus ? `TXQ ${bridgeStatus.txDepth} RXQ ${bridgeStatus.rxDepth}` : 'SYNCING...'}
+                {bridgeStatus ? `TXQ ${bridgeStatus.txDepth} RXQ ${bridgeStatus.rxDepth} · FIFO ${bridgeBufferedFrames}F/${bridgeJitterMs}ms` : 'SYNCING...'}
               </span>
               <button
                 type="button"
@@ -3638,6 +3804,32 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
                 style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#22d3ee', letterSpacing: '0.08em' }}
               >
                 INJECT RX
+              </button>
+              <button
+                type="button"
+                onClick={toggleBridgeRecording}
+                className="font-display text-xs px-2 py-1 rounded"
+                style={{ background: bridgeRecording ? '#3a0808' : '#0a1208', border: `1px solid ${bridgeRecording ? '#ef4444' : '#1a2e1a'}`, color: bridgeRecording ? '#fca5a5' : '#ef4444', letterSpacing: '0.08em' }}
+              >
+                {bridgeRecording ? `STOP REC · ${bridgeRecordingEvents.length}` : 'REC'}
+              </button>
+              <button
+                type="button"
+                onClick={() => replayBridgeRecording(1)}
+                disabled={bridgeRecordingEvents.length === 0 || bridgeRecording}
+                className="font-display text-xs px-2 py-1 rounded"
+                style={{ background: bridgeReplayRate === 1 ? '#08283a' : '#0a1208', border: '1px solid #1a2e1a', color: bridgeRecordingEvents.length === 0 || bridgeRecording ? '#1f4a1f' : '#22d3ee', letterSpacing: '0.08em' }}
+              >
+                PLAY 1×
+              </button>
+              <button
+                type="button"
+                onClick={() => replayBridgeRecording(4)}
+                disabled={bridgeRecordingEvents.length === 0 || bridgeRecording}
+                className="font-display text-xs px-2 py-1 rounded"
+                style={{ background: bridgeReplayRate === 4 ? '#08283a' : '#0a1208', border: '1px solid #1a2e1a', color: bridgeRecordingEvents.length === 0 || bridgeRecording ? '#1f4a1f' : '#22d3ee', letterSpacing: '0.08em' }}
+              >
+                PLAY 4×
               </button>
             </div>
 
@@ -3725,7 +3917,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
         </div>
 
         {/* ── SPECTRUM SCOPE + WATERFALL ── */}
-            <SpectrumScope centerKhz={rxFreqKhz} txMode={txMode || voxLatchedTx} spanKhz={spectrumSpanKhz} hold={spectrumHold} markerOn={spectrumMarker} fixedTuning={fixedTuning || lockTuning} signals={visibleSignals.map(signal => ({ offsetKhz: signal.offsetKhz, strength: Math.min(9.5, signal.rawStrength) }))} noiseFloor={noiseFloor} rxVfo={rxVfo} />
+            <SpectrumScope centerKhz={rxFreqKhz} txMode={txMode || voxLatchedTx} spanKhz={spectrumSpanKhz} hold={spectrumHold} markerOn={spectrumMarker} fixedTuning={fixedTuning || lockTuning} signals={visibleSignals.map(signal => ({ offsetKhz: signal.offsetKhz, strength: Math.min(9.5, signal.rawStrength) }))} noiseFloor={bridgePlaybackFrame?.noiseFloor ?? noiseFloor} rxVfo={rxVfo} />
 
       </div>
       {/* Floating Morse button */}

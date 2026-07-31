@@ -1,3 +1,14 @@
+export interface BridgeAnalogPayload {
+  domain: "audio-baseband"
+  encoding: "f32-normalized"
+  sampleRateHz: number
+  samplePeriodUs: number
+  channels: 1
+  samples: number[]
+  peak: number
+  rms: number
+}
+
 export interface BridgeTxMessage {
   id?: string
   callsign: string
@@ -9,11 +20,15 @@ export interface BridgeTxMessage {
   rfGain: number
   micGain: number
   noiseFloor: number
+  analog: BridgeAnalogPayload
   note?: string
 }
 
 export interface BridgeRxFrame {
+  frameIndex: number
   tickMs: number
+  offsetMs: number
+  capturedAt: number
   strength: number
   noiseFloor: number
   fade: number
@@ -29,7 +44,9 @@ export interface BridgeRxEvent {
   freqKhz: number
   vfo: "A" | "B"
   startedAt: number
+  generatedAt: number
   durationMs: number
+  frameIntervalMs: number
   frames: BridgeRxFrame[]
 }
 
