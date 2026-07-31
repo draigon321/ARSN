@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { getAllowedBands, getRadioCountryProfile, RADIO_COUNTRY_PROFILES } from './radioRestrictions'
+import { getAllowedBands, getAllowedModes, getBandForFrequency, getRadioCountryProfile, RADIO_COUNTRY_PROFILES } from './radioRestrictions'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -2959,10 +2959,24 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
   const selectBand = (b: string) => {
     setBand(b)
     setFreqKhz(BAND_FREQS[b])
-    if (parseInt(b) > 30 || b === '6m') setMode('FM')
-    else if (BAND_FREQS[b] < 10000) setMode('LSB')
-    else setMode('USB')
+    const allowedModes = getAllowedModes(country, license, b)
+    const nextMode = allowedModes.includes(mode) ? mode : allowedModes[0]
+    if (nextMode) setMode(nextMode)
   }
+
+  useEffect(() => {
+    const matchedBand = getBandForFrequency(freqKhz)
+    if (matchedBand && matchedBand !== band) {
+      setBand(matchedBand)
+    }
+  }, [band, freqKhz])
+
+  useEffect(() => {
+    const allowedModes = getAllowedModes(country, license, band)
+    if (allowedModes.length > 0 && !allowedModes.includes(mode)) {
+      setMode(allowedModes[0])
+    }
+  }, [band, country, license, mode])
 
   const saveCurrentFrequency = () => {
     const nextLabel = `${band} ${mode}`
@@ -2986,6 +3000,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
   }
 
   const allowedBands = getAllowedBands(country, license)
+  const allowedModes = getAllowedModes(country, license, band)
 
   const fmtFreq = (khz: number) => {
     const mhz = (khz / 1000).toFixed(3)
@@ -3186,14 +3201,17 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
               <div key={ri} className="flex gap-1">
               {row.map(m => (
                 <button key={m}
-                  onClick={() => setMode(m)}
+                  onClick={() => { if (emergencyOverride || allowedModes.includes(m)) setMode(m) }}
+                  disabled={!emergencyOverride && !allowedModes.includes(m)}
                   className="font-display text-xs px-2.5 py-1 rounded transition-all"
                   style={{
-                    background: mode === m ? '#162016' : '#0a1208',
-                    border: `1px solid ${mode === m ? '#4ade80' : '#1a2e1a'}`,
-                    color: mode === m ? '#4ade80' : '#2d6a2d',
+                    background: !emergencyOverride && !allowedModes.includes(m) ? '#081008' : mode === m ? '#162016' : '#0a1208',
+                    border: `1px solid ${mode === m && (emergencyOverride || allowedModes.includes(m)) ? '#4ade80' : !emergencyOverride && !allowedModes.includes(m) ? '#1b1f1b' : '#1a2e1a'}`,
+                    color: !emergencyOverride && !allowedModes.includes(m) ? '#374151' : mode === m ? '#4ade80' : '#2d6a2d',
                     fontSize: 10, letterSpacing: '0.06em',
-                    boxShadow: mode === m ? '0 0 8px #4ade8030' : 'none',
+                    boxShadow: mode === m && (emergencyOverride || allowedModes.includes(m)) ? '0 0 8px #4ade8030' : 'none',
+                    opacity: !emergencyOverride && !allowedModes.includes(m) ? 0.45 : 1,
+                    cursor: !emergencyOverride && !allowedModes.includes(m) ? 'not-allowed' : 'pointer',
                   }}>
                   {m}
                 </button>
