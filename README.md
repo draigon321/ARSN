@@ -21,7 +21,7 @@ Implemented so far:
 - Persistent transceiver connection choice, tuning state, and receiver controls
 - Persistent saved-frequency quick list in the radio panel
 - Persistent country/license radio restrictions with emergency override
-- Band and mode availability is driven from `src/radioRestrictions.ts`
+- Band, mode, and frequency availability is driven from `src/radioRestrictions.ts`
 - Frequency entry and tuning now validate against the same local rule file
 - Persistent mail inbox, compose draft, and message actions
 - Reply, forward, and delete actions in mail

@@ -36,6 +36,12 @@ export const RADIO_BAND_RULES: RadioBandRule[] = [
   { band: '23cm', minKhz: 1240000, maxKhz: 1300000, modes: ['FM', 'USB', 'DIG', 'AX.25'] },
 ]
 
+export const RADIO_BANDS = RADIO_BAND_RULES.map(rule => rule.band)
+
+export const BAND_FREQS: Record<string, number> = Object.fromEntries(
+  RADIO_BAND_RULES.map(rule => [rule.band, Math.round((rule.minKhz + rule.maxKhz) / 2)]),
+)
+
 export const RADIO_COUNTRY_PROFILES: Record<string, RadioCountryProfile> = {
   'United States': {
     defaultLicense: 'General',

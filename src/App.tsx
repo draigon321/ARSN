@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { getAllowedBands, getAllowedModes, getBandForFrequency, getFrequencyBounds, getRadioCountryProfile, RADIO_COUNTRY_PROFILES, isFrequencyAllowed } from './radioRestrictions'
+import { BAND_FREQS, getAllowedBands, getAllowedModes, getBandForFrequency, getFrequencyBounds, getRadioCountryProfile, RADIO_BANDS, RADIO_COUNTRY_PROFILES, isFrequencyAllowed } from './radioRestrictions'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -2624,19 +2624,6 @@ function MorsePopup({ onClose }: { onClose: () => void }) {
 // ─── Radio (Primary Transceiver) Section ─────────────────────────────────────
 
 const MODES = ['LSB', 'USB', 'CW', 'CWR', 'AM', 'FM', 'DIG', 'FT8']
-const BANDS = [
-  '2200m', '630m',
-  '160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m',
-  '2m', '1.25m', '70cm', '33cm', '23cm',
-]
-const BAND_FREQS: Record<string, number> = {
-  '2200m': 137,    '630m': 475,
-  '160m': 1900,   '80m': 3985,   '60m': 5357,   '40m': 7250,  '30m': 10130,
-  '20m': 14200,   '17m': 18130,  '15m': 21300,  '12m': 24940, '10m': 28500,
-  '6m': 50125,    '2m': 146520,  '1.25m': 223500, '70cm': 446000,
-  '33cm': 915000, '23cm': 1296000,
-}
-
 interface SavedFrequency {
   id: number
   label: string
@@ -2993,7 +2980,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
   const recallFrequency = (entry: SavedFrequency) => {
     setFreqKhz(entry.freqKhz)
     setMode(entry.mode)
-    setBand(Object.keys(BAND_FREQS).find(b => BAND_FREQS[b] === entry.freqKhz) || band)
+    setBand(getBandForFrequency(entry.freqKhz) || band)
   }
 
   const removeSavedFrequency = (id: number) => {
@@ -3112,7 +3099,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
             className="flex flex-col shrink-0">
             <div className="font-display text-xs mb-2 text-center" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>BAND</div>
             <div className="flex flex-col gap-1">
-              {BANDS.map(b => (
+              {RADIO_BANDS.map(b => (
                 <button key={b}
                   onClick={() => { if (emergencyOverride || allowedBands.includes(b)) selectBand(b) }}
                   disabled={!emergencyOverride && !allowedBands.includes(b)}
