@@ -30,6 +30,7 @@ Implemented so far:
 - Persistent BBS board, channel, and frequency-pair state
 - Persistent LoRa mesh settings and operator identity fields
 - Extracted local seed collections for channels, mail, and wiki content into `src/appSeedData.ts`
+- Extracted local mesh seed collections into `src/meshSeedData.ts`
 
 ## Run Locally
 
@@ -50,6 +51,7 @@ npm run build
 
 - `src/App.tsx` - Main application shell and all current feature sections
 - `src/appSeedData.ts` - Local seed content for channels, mail, and wiki views
+- `src/meshSeedData.ts` - Local seed content for LoRa / Meshtastic views
 - `src/index.css` - Global styling and theme tokens
 - `src/main.tsx` - React bootstrap entrypoint
 - `package.json` - Scripts and dependencies
