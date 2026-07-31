@@ -2984,6 +2984,16 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const [bridgeRecording, setBridgeRecording] = useState(false)
   const [bridgeRecordingEvents, setBridgeRecordingEvents] = useState<BridgeRxEvent[]>([])
   const [bridgeReplayRate, setBridgeReplayRate] = useState<number | null>(null)
+  const [radioSettingsOpen, setRadioSettingsOpen] = useState(false)
+  const [txInputDeviceId, setTxInputDeviceId] = useStoredState('arsn.radio.txInputDeviceId', 'default')
+  const [rxOutputDeviceId, setRxOutputDeviceId] = useStoredState('arsn.radio.rxOutputDeviceId', 'default')
+  const [txInputLevel, setTxInputLevel] = useStoredState('arsn.radio.txInputLevel', 80)
+  const [rxOutputLevel, setRxOutputLevel] = useStoredState('arsn.radio.rxOutputLevel', 70)
+  const [rxMonitorEnabled, setRxMonitorEnabled] = useStoredState('arsn.radio.rxMonitorEnabled', true)
+  const [audioBufferMs, setAudioBufferMs] = useStoredState('arsn.radio.audioBufferMs', 60)
+  const [audioAutoReconnect, setAudioAutoReconnect] = useStoredState('arsn.radio.audioAutoReconnect', true)
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
+  const [audioDeviceStatus, setAudioDeviceStatus] = useState('NOT SCANNED')
   const [bridgeError, setBridgeError] = useState<string | null>(null)
   const bridgeCursorRef = useRef(0)
   const bridgeTxStartRef = useRef<number | null>(null)
@@ -2993,6 +3003,8 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const bridgeReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bridgeRecordingRef = useRef(false)
   const bridgeEnqueueRef = useRef<(events: BridgeRxEvent[], playbackRate?: number) => void>(() => undefined)
+  const txInputStreamRef = useRef<MediaStream | null>(null)
+  const audioBufferMsRef = useRef(audioBufferMs)
   const previousTxModeRef = useRef(false)
   const frequencyBounds = getFrequencyBounds()
   const meshOnlineCount = MESH_NODES.filter(node => node.isOnline).length
@@ -3232,6 +3244,10 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   }, [bridgeRecording])
 
   useEffect(() => {
+    audioBufferMsRef.current = audioBufferMs
+  }, [audioBufferMs])
+
+  useEffect(() => {
     let cancelled = false
     let inFlight = false
 
@@ -3259,7 +3275,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
 
     const enqueueEvents = (events: BridgeRxEvent[], playbackRate = 1) => {
       if (events.length === 0) return
-      const jitterMs = 40 + Math.floor(Math.random() * 41)
+      const jitterMs = Math.max(20, audioBufferMsRef.current - 10) + Math.floor(Math.random() * 21)
       const sourceStart = events[0].generatedAt
       const playbackStart = Date.now() + jitterMs
 
@@ -3428,11 +3444,90 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     }, replayDuration + 120)
   }
 
+  const refreshAudioDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setAudioDeviceStatus('MEDIA DEVICES UNSUPPORTED')
+      return
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      setAudioDevices(devices.filter(device => device.kind === 'audioinput' || device.kind === 'audiooutput'))
+      setAudioDeviceStatus(`${devices.filter(device => device.kind.startsWith('audio')).length} DEVICES FOUND`)
+    } catch {
+      setAudioDeviceStatus('DEVICE SCAN FAILED')
+    }
+  }
+
+  const enableTxInput = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setAudioDeviceStatus('MIC INPUT UNSUPPORTED')
+      return
+    }
+    try {
+      txInputStreamRef.current?.getTracks().forEach(track => track.stop())
+      txInputStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: txInputDeviceId === 'default' ? true : { deviceId: { exact: txInputDeviceId } },
+      })
+      setAudioDeviceStatus('TX INPUT READY')
+      await refreshAudioDevices()
+    } catch {
+      setAudioDeviceStatus('TX INPUT PERMISSION DENIED')
+    }
+  }
+
+  const testRxOutput = async () => {
+    const AudioContextClass = window.AudioContext
+    if (!AudioContextClass) {
+      setAudioDeviceStatus('AUDIO OUTPUT UNSUPPORTED')
+      return
+    }
+    const context = new AudioContextClass()
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    const destination = context.createMediaStreamDestination()
+    const audio = new Audio()
+    oscillator.frequency.value = 700
+    gain.gain.value = Math.max(0.01, rxOutputLevel / 500)
+    oscillator.connect(gain)
+    gain.connect(destination)
+    audio.srcObject = destination.stream
+    if (rxOutputDeviceId !== 'default' && 'setSinkId' in audio) {
+      await (audio as HTMLAudioElement & { setSinkId: (deviceId: string) => Promise<void> }).setSinkId(rxOutputDeviceId)
+    }
+    await audio.play()
+    oscillator.start()
+    oscillator.stop(context.currentTime + 0.25)
+    oscillator.addEventListener('ended', () => {
+      audio.pause()
+      audio.srcObject = null
+      void context.close()
+    })
+    setAudioDeviceStatus(rxOutputDeviceId === 'default' ? 'TEST TONE · SYSTEM OUTPUT' : 'TEST TONE · SELECTED OUTPUT')
+  }
+
   useEffect(() => {
     return () => {
       if (bridgeReplayTimerRef.current) clearTimeout(bridgeReplayTimerRef.current)
+      txInputStreamRef.current?.getTracks().forEach(track => track.stop())
     }
   }, [])
+
+  useEffect(() => {
+    if (!radioSettingsOpen) return
+    void refreshAudioDevices()
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRadioSettingsOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [radioSettingsOpen])
+
+  useEffect(() => {
+    if (!audioAutoReconnect || !navigator.mediaDevices?.addEventListener) return
+    const handleDeviceChange = () => void refreshAudioDevices()
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange)
+  }, [audioAutoReconnect])
 
   useEffect(() => {
     onTelemetryChange({
@@ -3500,6 +3595,114 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden" style={{ background: '#050905' }}>
+      {radioSettingsOpen && (
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4"
+          style={{ zIndex: 100, background: '#000000b8', backdropFilter: 'blur(3px)' }}
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) setRadioSettingsOpen(false)
+          }}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="radio-settings-title"
+            className="w-full max-w-lg rounded-lg overflow-hidden"
+            style={{ background: '#050a05', border: '1px solid #285028', boxShadow: '0 0 40px #000, 0 0 24px #4ade8015' }}
+          >
+            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid #1a2e1a' }}>
+              <div>
+                <div id="radio-settings-title" className="font-display" style={{ color: '#4ade80', fontSize: 12, letterSpacing: '0.12em' }}>RADIO I/O SETTINGS</div>
+                <div className="font-mono mt-1" style={{ color: '#2d6a2d', fontSize: 9 }}>AUDIO ROUTING · FIFO PLAYBACK · LOCAL BRIDGE</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRadioSettingsOpen(false)}
+                aria-label="Close radio settings"
+                className="rounded px-2 py-1"
+                style={{ color: '#4a7a4a', border: '1px solid #1a2e1a', background: '#081008' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="font-display" style={{ color: '#4a7a4a', fontSize: 9, letterSpacing: '0.08em' }}>
+                  TX INPUT SOURCE
+                  <select
+                    value={txInputDeviceId}
+                    onChange={event => setTxInputDeviceId(event.target.value)}
+                    className="block w-full mt-1 rounded px-2 py-2 font-mono"
+                    style={{ background: '#020602', border: '1px solid #1f3d1f', color: '#86efac', fontSize: 11 }}
+                  >
+                    <option value="default">System default input</option>
+                    {audioDevices.filter(device => device.kind === 'audioinput' && device.deviceId !== 'default').map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="font-display" style={{ color: '#4a7a4a', fontSize: 9, letterSpacing: '0.08em' }}>
+                  RX OUTPUT SOURCE
+                  <select
+                    value={rxOutputDeviceId}
+                    onChange={event => setRxOutputDeviceId(event.target.value)}
+                    className="block w-full mt-1 rounded px-2 py-2 font-mono"
+                    style={{ background: '#020602', border: '1px solid #1f3d1f', color: '#86efac', fontSize: 11 }}
+                  >
+                    <option value="default">System default output</option>
+                    {audioDevices.filter(device => device.kind === 'audiooutput' && device.deviceId !== 'default').map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>{device.label || `Speaker ${index + 1}`}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="font-display" style={{ color: '#4a7a4a', fontSize: 9 }}>
+                  TX INPUT LEVEL · {txInputLevel}%
+                  <input className="block w-full mt-2" type="range" min="0" max="100" value={txInputLevel} onChange={event => setTxInputLevel(+event.target.value)} style={{ accentColor: '#4ade80' }} />
+                </label>
+                <label className="font-display" style={{ color: '#4a7a4a', fontSize: 9 }}>
+                  RX OUTPUT LEVEL · {rxOutputLevel}%
+                  <input className="block w-full mt-2" type="range" min="0" max="100" value={rxOutputLevel} onChange={event => setRxOutputLevel(+event.target.value)} style={{ accentColor: '#4ade80' }} />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="font-display" style={{ color: '#4a7a4a', fontSize: 9 }}>
+                  FIFO LATENCY
+                  <select value={audioBufferMs} onChange={event => setAudioBufferMs(+event.target.value)} className="block w-full mt-1 rounded px-2 py-2 font-mono" style={{ background: '#020602', border: '1px solid #1f3d1f', color: '#86efac', fontSize: 11 }}>
+                    <option value={40}>Low · 40 ms</option>
+                    <option value={60}>Balanced · 60 ms</option>
+                    <option value={80}>Stable · 80 ms</option>
+                    <option value={120}>High stability · 120 ms</option>
+                  </select>
+                </label>
+                <div className="flex flex-col justify-end gap-2">
+                  <label className="font-mono flex items-center gap-2" style={{ color: '#4a7a4a', fontSize: 10 }}>
+                    <input type="checkbox" checked={rxMonitorEnabled} onChange={event => setRxMonitorEnabled(event.target.checked)} style={{ accentColor: '#4ade80' }} />
+                    Monitor RX audio
+                  </label>
+                  <label className="font-mono flex items-center gap-2" style={{ color: '#4a7a4a', fontSize: 10 }}>
+                    <input type="checkbox" checked={audioAutoReconnect} onChange={event => setAudioAutoReconnect(event.target.checked)} style={{ accentColor: '#4ade80' }} />
+                    Auto-reconnect devices
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap pt-3" style={{ borderTop: '1px solid #1a2e1a' }}>
+                <button type="button" onClick={() => void enableTxInput()} className="font-display rounded px-3 py-2" style={{ background: '#102010', border: '1px solid #2d6a2d', color: '#4ade80', fontSize: 9 }}>ENABLE TX INPUT</button>
+                <button type="button" onClick={() => void testRxOutput().catch(() => setAudioDeviceStatus('OUTPUT TEST FAILED'))} className="font-display rounded px-3 py-2" style={{ background: '#081820', border: '1px solid #164e63', color: '#22d3ee', fontSize: 9 }}>TEST RX OUTPUT</button>
+                <button type="button" onClick={() => void refreshAudioDevices()} className="font-display rounded px-3 py-2" style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 9 }}>REFRESH DEVICES</button>
+                <span className="font-mono ml-auto" style={{ color: audioDeviceStatus.includes('FAILED') || audioDeviceStatus.includes('DENIED') ? '#ef4444' : '#2d6a2d', fontSize: 9 }}>{audioDeviceStatus}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main display area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
 
@@ -3509,7 +3712,19 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
           {/* Main Tuning Knob + Sliders + PTT */}
           <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 6, padding: '12px 16px' }}
             className="flex flex-col items-center gap-3 shrink-0">
-            <div className="font-display text-xs" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>MAIN TUNING</div>
+            <div className="flex items-center justify-between w-full">
+              <div className="font-display text-xs" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>MAIN TUNING</div>
+              <button
+                type="button"
+                onClick={() => setRadioSettingsOpen(true)}
+                aria-label="Open radio I/O settings"
+                title="Radio I/O settings"
+                className="rounded px-1.5 py-0.5"
+                style={{ background: '#081008', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 12, lineHeight: 1 }}
+              >
+                ⚙
+              </button>
+            </div>
             <VFOKnob onChange={handleVfoTurn} />
             <div className="flex gap-1">
               {[1, 10, 100, 1000].map(step => (
