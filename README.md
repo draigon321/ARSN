@@ -63,7 +63,7 @@ Planned work should focus on replacing the remaining mock data with real storage
 - Device and node discovery for actual radio and mesh hardware
 - Auth, operator profiles, and node-level configuration persistence
 
-Radio access rules are stored in `src/radioRestrictions.ts` so band policy can be updated without changing the main cockpit component.
+Radio access rules are stored in `src/radioRestrictionsData.json` and read through `src/radioRestrictions.ts` so band policy can be updated without changing the main cockpit component.
 
 ## Notes
 
