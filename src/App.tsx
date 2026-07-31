@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { BAND_FREQS, getAllowedBands, getAllowedModes, getBandForFrequency, getFrequencyBounds, getRadioCountryProfile, RADIO_BANDS, RADIO_COUNTRY_PROFILES, isFrequencyAllowed } from './radioRestrictions'
+import { CHANNEL_MESSAGES, MAIL_MESSAGES, WIKI_ARTICLES } from './appSeedData'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -98,58 +99,6 @@ const CHANNELS: Channel[] = [
   { id: 'ares-ops', name: 'ares-ops', freq: '147.195 MHz', mode: 'FM', unread: 0 },
 ]
 
-const CHANNEL_MESSAGES: Record<string, Message[]> = {
-  general: [
-    { id: 1, callsign: 'W7ARK', text: 'Good morning all. Solar flux at 142 today, bands look good for DX.', time: '08:14', type: 'normal' },
-    { id: 2, callsign: 'KD9LMX', text: 'Copy that. Already worked JA3PFM on 20m SSB.', time: '08:17', type: 'normal' },
-    { id: 3, callsign: 'N0GRD', text: '[SYSTEM] Node ARSN-RELAY-01 came online. Mesh connectivity restored.', time: '08:22', type: 'system' },
-    { id: 4, callsign: 'WB4TXX', text: 'Morning check-in. W4 area, QTH near Asheville. Portable ops today.', time: '08:30', type: 'normal' },
-    { id: 5, callsign: 'K5LNT', text: 'Any traffic for the Rocky Mountain net? Starting 0900 local.', time: '08:44', type: 'normal' },
-    { id: 6, callsign: 'W7ARK', text: 'Negative K5LNT, nothing for Rocky Mtn. 73.', time: '08:45', type: 'normal' },
-    { id: 7, callsign: 'KG4ZPQ', text: 'Reminder: ARES county drill this Saturday 0800-1200. All hams encouraged to participate.', time: '09:01', type: 'normal' },
-    { id: 8, callsign: 'N0GRD', text: '[ALERT] Propagation alert: CME impact expected 72h from now. Prepare HF backup comms.', time: '09:15', type: 'alert' },
-  ],
-  emergency: [
-    { id: 1, callsign: 'KE0ARS', text: '[PRIORITY] Search and rescue operation active. Grid DM79. Requesting all available operators.', time: '07:30', type: 'alert' },
-    { id: 2, callsign: 'W0EOC', text: 'EOC activated. ICS Form 213 submitted. Staging at Highway 36 & County Rd 11.', time: '07:33', type: 'normal' },
-    { id: 3, callsign: 'KG5WXY', text: 'En route to staging. ETA 20 min. Bringing portable repeater.', time: '07:40', type: 'normal' },
-    { id: 4, callsign: 'N0GRD', text: '[SYSTEM] Emergency net activated on 146.520 simplex. All traffic priority.', time: '07:41', type: 'system' },
-  ],
-  'wx-reports': [
-    { id: 1, callsign: 'KD0WX', text: 'WX REPORT: DM78 - Temp 62F, Wind NW 12mph, Pressure 29.92 falling. Possible front 24h.', time: '06:00', type: 'normal' },
-    { id: 2, callsign: 'W5WXR', text: 'WX REPORT: EM10 - Temp 74F, Wind S 8mph, Humidity 88%. Dew point 71. Convection likely this PM.', time: '06:15', type: 'normal' },
-    { id: 3, callsign: 'KA0CLD', text: 'SKYWARN activation for SW counties. Trained spotters please report.', time: '07:45', type: 'alert' },
-  ],
-  'dx-cluster': [
-    { id: 1, callsign: 'DX-BOT', text: 'SPOT: JT65 14076.0 VK3IO 0802Z 23dB clear signal into W7 land', time: '08:02', type: 'system' },
-    { id: 2, callsign: 'DX-BOT', text: 'SPOT: FT8 7074.0 ZL2IFB 0811Z 15dB solid into central US', time: '08:11', type: 'system' },
-    { id: 3, callsign: 'W1DX', text: 'ZL2IFB confirmed, 59+ on 40m. Good propagation over Pacific.', time: '08:13', type: 'normal' },
-  ],
-  'net-control': [
-    { id: 1, callsign: 'W0NCS', text: 'Net Control W0NCS. This is the ARSN daily check-in net. QNI?', time: '07:00', type: 'normal' },
-    { id: 2, callsign: 'KD9LMX', text: 'KD9LMX checking in. Grid EN61. No traffic.', time: '07:01', type: 'normal' },
-    { id: 3, callsign: 'WB4TXX', text: 'WB4TXX checking in. Grid EM85. One item for the net.', time: '07:02', type: 'normal' },
-    { id: 4, callsign: 'W0NCS', text: 'WB4TXX go ahead with your traffic.', time: '07:03', type: 'normal' },
-    { id: 5, callsign: 'WB4TXX', text: 'RADIOGRAM: NR 47 HXG W4 WB4TXX 5 ASHEVILLE NC 1420 — FAMILY SAFE STAYING WITH UNCLE STOP POWER RESTORED STOP WILL TRAVEL THURSDAY STOP', time: '07:04', type: 'normal' },
-  ],
-  'packet-node': [
-    { id: 1, callsign: 'NODE-01', text: '[AX.25] Beacon: ARSN-1>APRS:!3845.22N/10459.34W#PHG7360/ARSN Relay Node 01', time: '08:00', type: 'system' },
-    { id: 2, callsign: 'KG4ZPQ-9', text: '[AX.25] Position report: KG4ZPQ-9>APRS via ARSN-1: mobile heading NE @45mph', time: '08:12', type: 'normal' },
-    { id: 3, callsign: 'NODE-01', text: '[AX.25] HEARD: WB4TXX-7 WB4TXX-5 KG4ZPQ-9 W7ARK-1', time: '08:15', type: 'system' },
-  ],
-  'ares-ops': [
-    { id: 1, callsign: 'W0ARES', text: 'ARES Section Manager: Monthly report submitted to ARRL. 47 activations YTD.', time: '08:00', type: 'normal' },
-    { id: 2, callsign: 'KE0ARS', text: 'County EC: Training exercise debrief notes uploaded to wiki. Check /wiki/ares-drill-2024.', time: '08:30', type: 'normal' },
-  ],
-}
-
-const MAIL_MESSAGES: MailMessage[] = [
-  { id: 1, from: 'WB4TXX', to: 'KD9LMX', subject: 'RE: Field Day antenna setup', body: 'I have the G5RV up at 35 feet, fed with 450-ohm ladder line. Working great on 40/20/15. Let me know if you need the dimensions for the supports. 73 de WB4TXX', time: '2024-01-15 09:42', read: false, forwarded: false },
-  { id: 2, from: 'W0EOC', to: 'KD9LMX', subject: 'ARES Drill Debrief - Action Items', body: 'Following our Saturday drill, here are the action items:\n\n1. Update repeater backup power (K5LNT)\n2. Test NVIS capability on 80m (all ops)\n3. Review ICS-213 procedures\n4. Verify Winlink nodes for message forwarding\n\nNext drill: Feb 10. Please confirm availability.', time: '2024-01-14 16:20', read: false, forwarded: true },
-  { id: 3, from: 'DX-BOT', to: 'KD9LMX', subject: 'DX Alert: VK0EK now QRV', body: 'Heard Island DXpedition VK0EK is now QRV on 20m FT8. Frequency 14.074 MHz. Signal reports from W6 area: -12 to -8 dB. Good luck!', time: '2024-01-14 11:05', read: true, forwarded: false },
-  { id: 4, from: 'N0GRD', to: 'KD9LMX', subject: 'Node upgrade completed', body: 'ARSN-RELAY-01 has been upgraded to firmware v2.4.1. New features: improved mesh routing, AX.25 compression, and APRS digipeater mode. No action required on your end.', time: '2024-01-13 08:00', read: true, forwarded: false },
-  { id: 5, from: 'KG5WXY', to: 'KD9LMX', subject: 'Antenna question', body: 'Hey, what feedline are you running on your 40m dipole? I"m getting some noise on receive and wondering if coax quality is the issue. Also, have you tried the noise canceling on the IC-7300? Thanks.', time: '2024-01-12 14:33', read: true, forwarded: false },
-]
 
 const MESH_NODES: MeshNode[] = [
   { id: '!a1b2c3d4', shortName: 'ARSN', longName: 'KD9LMX ARSN Node',   rssi: 0,    snr: 0,    hops: 0, battery: 87, voltage: 3.84, lat: 38.75, lng: -104.59, alt: 1609, lastHeard: 'now',     uptime: '4d 12h', isMqttGateway: false, isOnline: true  },
@@ -182,68 +131,6 @@ const MESH_CHANNELS_INIT: MeshChannel[] = [
   { index: 7, name: '',           role: 'DISABLED',  psk: '',             uplinkEnabled: false, downlinkEnabled: false },
 ]
 
-const WIKI_ARTICLES: WikiArticle[] = [
-  {
-    id: 1, title: 'NVIS Antenna Theory & Setup', category: 'Antennas',
-    summary: 'Near Vertical Incidence Skywave propagation for regional HF communications without relying on distant repeaters.',
-    tags: ['HF', 'NVIS', 'emergency', 'antenna'],
-    content: 'NVIS uses HF radio waves directed nearly straight up to bounce off the ionosphere and return within 0-600km radius...'
-  },
-  {
-    id: 2, title: 'Winlink Email Over Radio', category: 'Digital Modes',
-    summary: 'Store-and-forward email system for amateur radio operators. Works on HF, VHF, and UHF without internet.',
-    tags: ['Winlink', 'digital', 'HF', 'email'],
-    content: 'Winlink Global Radio Email provides store-and-forward message capability using amateur radio...'
-  },
-  {
-    id: 3, title: 'ICS Forms for Amateur Radio', category: 'Emergency Comms',
-    summary: 'Incident Command System forms used during activations. ICS-213, ICS-214, and radiogram formats.',
-    tags: ['ARES', 'ICS', 'emergency', 'forms'],
-    content: 'The Incident Command System provides standardized forms for emergency communications...'
-  },
-  {
-    id: 4, title: 'LoRa Mesh Networking Basics', category: 'Digital Modes',
-    summary: 'Long-range, low-power radio technology for off-grid mesh networks. 915 MHz band, Meshtastic protocol.',
-    tags: ['LoRa', 'Meshtastic', 'mesh', 'digital'],
-    content: 'LoRa (Long Range) modulation provides exceptional range with minimal power consumption...'
-  },
-  {
-    id: 5, title: 'Go-Kit Build Guide', category: 'Field Operations',
-    summary: 'Essential equipment list and packing guide for a portable emergency amateur radio station.',
-    tags: ['go-kit', 'portable', 'emergency', 'equipment'],
-    content: 'A well-prepared go-kit allows rapid deployment for emergency communications...'
-  },
-  {
-    id: 6, title: 'HF Propagation Fundamentals', category: 'Propagation',
-    summary: 'Solar cycles, ionospheric layers, band characteristics, and prediction tools for HF operators.',
-    tags: ['HF', 'propagation', 'solar', 'ionosphere'],
-    content: 'HF radio propagation depends on ionospheric conditions driven by solar activity...'
-  },
-  {
-    id: 7, title: 'APRS — Tracking & Messaging', category: 'Digital Modes',
-    summary: 'Automatic Packet Reporting System for real-time tactical tracking, weather reporting, and short messaging.',
-    tags: ['APRS', 'AX.25', 'tracking', 'digital'],
-    content: 'APRS provides real-time tactical digital communications using AX.25 packet protocol...'
-  },
-  {
-    id: 8, title: 'Battery & Power Systems', category: 'Field Operations',
-    summary: 'LiFePO4, lead-acid, solar charging, and power budgeting for off-grid radio operations.',
-    tags: ['power', 'battery', 'solar', 'portable'],
-    content: 'Off-grid radio operations require careful power system design and management...'
-  },
-  {
-    id: 9, title: 'FT8 / FT4 Digital Mode Guide', category: 'Digital Modes',
-    summary: 'WSJT-X weak signal modes for DX and contesting under poor propagation conditions.',
-    tags: ['FT8', 'FT4', 'WSJT-X', 'digital', 'DX'],
-    content: 'FT8 is a weak-signal digital mode designed for HF propagation under challenging conditions...'
-  },
-  {
-    id: 10, title: 'Repeater Operation & Etiquette', category: 'VHF/UHF',
-    summary: 'Using repeaters correctly, CTCSS tones, linking systems, and linked network operation.',
-    tags: ['repeater', 'VHF', 'UHF', 'FM'],
-    content: 'Repeaters extend the range of VHF/UHF FM communications by receiving and retransmitting...'
-  },
-]
 
 const Q_CODES = [
   { code: 'QRN', meaning: 'Static interference is troubling me' },
@@ -2689,7 +2576,7 @@ function PowerMeter({ level }: { level: number }) {
   )
 }
 
-function SpectrumScope({ centerKhz, txMode }: { centerKhz: number; txMode: boolean }) {
+function SpectrumScope({ centerKhz, txMode, spanKhz, hold, markerOn, fixedTuning }: { centerKhz: number; txMode: boolean; spanKhz: number; hold: boolean; markerOn: boolean; fixedTuning: boolean }) {
   const bars = 120
   const [spectrum, setSpectrum] = useState<number[]>(() =>
     Array.from({ length: bars }, (_, i) => {
@@ -2712,6 +2599,7 @@ function SpectrumScope({ centerKhz, txMode }: { centerKhz: number; txMode: boole
   )
 
   useEffect(() => {
+    if (hold) return
     const id = setInterval(() => {
       setSpectrum(prev => prev.map((v, i) => {
         const mid = bars / 2
@@ -2735,7 +2623,7 @@ function SpectrumScope({ centerKhz, txMode }: { centerKhz: number; txMode: boole
       })
     }, 120)
     return () => clearInterval(id)
-  }, [])
+  }, [hold])
 
   const scopeH = 80
   const waterfallH = 96
@@ -2758,7 +2646,9 @@ function SpectrumScope({ centerKhz, txMode }: { centerKhz: number; txMode: boole
       <div className="flex items-center justify-between px-3 py-1.5" style={{ borderBottom: '1px solid #0f1f0f' }}>
         <span className="font-display text-xs" style={{ color: '#22d3ee', fontSize: 9, letterSpacing: '0.1em' }}>SPECTRUM SCOPE</span>
         <div className="flex items-center gap-3">
-          <span className="font-mono text-xs" style={{ color: '#2d6a2d', fontSize: 9 }}>SPAN: 50kHz</span>
+          <span className="font-mono text-xs" style={{ color: '#2d6a2d', fontSize: 9 }}>SPAN: {spanKhz}kHz</span>
+          {fixedTuning && <span className="font-display text-xs px-1.5 py-0.5 rounded" style={{ background: '#4ade8015', color: '#4ade80', fontSize: 8, letterSpacing: '0.08em' }}>FIXED</span>}
+          {markerOn && <span className="font-display text-xs px-1.5 py-0.5 rounded" style={{ background: '#22d3ee15', color: '#22d3ee', fontSize: 8, letterSpacing: '0.08em' }}>MARK</span>}
           <span className="font-mono text-xs" style={{ color: '#2d6a2d', fontSize: 9 }}>REF: -20dB</span>
           {txMode && <span className="font-display text-xs px-1.5 py-0.5 rounded" style={{ background: '#ef444420', color: '#ef4444', fontSize: 9, letterSpacing: '0.08em' }}>TX</span>}
         </div>
@@ -2921,6 +2811,10 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
     { id: 2, label: '40m NVIS', freqKhz: 7250, mode: 'LSB' },
     { id: 3, label: '2m FM', freqKhz: 146520, mode: 'FM' },
   ])
+  const [spectrumSpanKhz, setSpectrumSpanKhz] = useStoredState('arsn.radio.spectrumSpanKhz', 50)
+  const [spectrumHold, setSpectrumHold] = useStoredState('arsn.radio.spectrumHold', false)
+  const [spectrumMarker, setSpectrumMarker] = useStoredState('arsn.radio.spectrumMarker', true)
+  const [fixedTuning, setFixedTuning] = useStoredState('arsn.radio.fixedTuning', false)
   const frequencyBounds = getFrequencyBounds()
 
   // Animate S-meter
@@ -2942,6 +2836,20 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
 
   const handleVfoTurn = (delta: number) => {
     setFreqKhz(prev => Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, prev + delta)))
+  }
+
+  const tuneToFrequency = (khz: number, nextMode?: string) => {
+    setFreqKhz(khz)
+    const matchedBand = getBandForFrequency(khz)
+    if (matchedBand) {
+      setBand(matchedBand)
+      const allowedModes = getAllowedModes(country, license, matchedBand)
+      if (nextMode && allowedModes.includes(nextMode)) {
+        setMode(nextMode)
+      } else if (!allowedModes.includes(mode) && allowedModes[0]) {
+        setMode(allowedModes[0])
+      }
+    }
   }
 
   const selectBand = (b: string) => {
@@ -2990,6 +2898,18 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
   const allowedBands = getAllowedBands(country, license)
   const allowedModes = getAllowedModes(country, license, band)
   const frequencyAllowed = emergencyOverride || isFrequencyAllowed(country, license, freqKhz)
+  const functionKeys = [12.5, 25, 50, 100]
+
+  const cycleSpan = () => {
+    setSpectrumSpanKhz(prev => {
+      const next = functionKeys[(functionKeys.indexOf(prev) + 1) % functionKeys.length]
+      return next
+    })
+  }
+
+  const recallPreset = (freq: number, presetMode: string) => {
+    tuneToFrequency(freq, presetMode)
+  }
 
   const fmtFreq = (khz: number) => {
     const mhz = (khz / 1000).toFixed(3)
@@ -3019,9 +2939,15 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
     </button>
   )
 
-  const FnButton = ({ label }: { label: string }) => (
-    <button className="font-display text-xs py-2 rounded-sm flex-1"
-      style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#1f4a1f', fontSize: 9, letterSpacing: '0.06em' }}>
+  const FnButton = ({ label, active, onClick }: { label: string; active?: boolean; onClick?: () => void }) => (
+    <button onClick={onClick} className="font-display text-xs py-2 rounded-sm flex-1 transition-all"
+      style={{
+        background: active ? '#162016' : '#0a1208',
+        border: `1px solid ${active ? '#4ade80' : '#1a2e1a'}`,
+        color: active ? '#4ade80' : '#1f4a1f',
+        fontSize: 9, letterSpacing: '0.06em',
+        boxShadow: active ? '0 0 6px #4ade8020' : 'none',
+      }}>
       {label}
     </button>
   )
@@ -3312,27 +3238,27 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
         </div>
 
         {/* ── SPECTRUM SCOPE + WATERFALL ── */}
-        <SpectrumScope centerKhz={freqKhz} txMode={txMode} />
+            <SpectrumScope centerKhz={freqKhz} txMode={txMode} spanKhz={spectrumSpanKhz} hold={spectrumHold} />
 
         {/* ── FUNCTION KEY ROW ── */}
         <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 6, padding: '8px 12px' }}>
           <div className="font-display text-xs mb-2" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.1em' }}>FUNCTION</div>
           <div className="flex gap-1.5">
-            <FnButton label="SPAN" />
-            <FnButton label="ATT" />
-            <FnButton label="MARKER" />
-            <FnButton label="HOLD" />
-            <FnButton label="CENT/FIX" />
-            <FnButton label="MAIN/SUB" />
-            <FnButton label="SET" />
+            <FnButton label="SPAN" active onClick={cycleSpan} />
+            <FnButton label="ATT" active={att !== 'OFF'} onClick={() => setAtt(a => a === 'OFF' ? '10dB' : a === '10dB' ? '20dB' : 'OFF')} />
+            <FnButton label="MARKER" active={spectrumMarker} onClick={() => setSpectrumMarker(p => !p)} />
+            <FnButton label="HOLD" active={spectrumHold} onClick={() => setSpectrumHold(p => !p)} />
+            <FnButton label={fixedTuning ? 'FIXED' : 'CENT'} active={fixedTuning} onClick={() => setFixedTuning(p => !p)} />
+            <FnButton label={vfoA ? 'MAIN' : 'SUB'} active onClick={() => setVfoA(p => !p)} />
+            <FnButton label="SET" active onClick={saveCurrentFrequency} />
             <div style={{ width: 1, background: '#1a2e1a', margin: '0 4px' }} />
-            <FnButton label="F-1" />
-            <FnButton label="F-2" />
-            <FnButton label="F-3" />
-            <FnButton label="F-4" />
-            <FnButton label="F-5" />
-            <FnButton label="F-6" />
-            <FnButton label="F-7" />
+            <FnButton label="F-1" active onClick={() => recallPreset(14074, 'FT8')} />
+            <FnButton label="F-2" active onClick={() => recallPreset(14300, 'USB')} />
+            <FnButton label="F-3" active onClick={() => recallPreset(7250, 'LSB')} />
+            <FnButton label="F-4" active onClick={() => recallPreset(3985, 'LSB')} />
+            <FnButton label="F-5" active onClick={() => recallPreset(146520, 'FM')} />
+            <FnButton label="F-6" active onClick={() => recallPreset(446000, 'FM')} />
+            <FnButton label="F-7" active onClick={() => recallPreset(28500, 'USB')} />
           </div>
         </div>
 
