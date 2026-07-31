@@ -10,13 +10,13 @@ async function parseJson<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export async function sendBridgeTx(message: BridgeTxMessage): Promise<{ id: string; seq: number }> {
+export async function sendBridgeTx(message: BridgeTxMessage): Promise<{ id: string; seq: number | null }> {
   const response = await fetch(`${BRIDGE_BASE}/tx`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(message),
   })
-  return parseJson<{ id: string; seq: number }>(response)
+  return parseJson<{ id: string; seq: number | null }>(response)
 }
 
 export async function pullBridgeRx(afterCursor: number): Promise<BridgePullResponse> {

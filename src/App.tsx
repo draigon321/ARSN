@@ -2992,12 +2992,13 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const [rxMonitorEnabled, setRxMonitorEnabled] = useStoredState('arsn.radio.rxMonitorEnabled', true)
   const [audioBufferMs, setAudioBufferMs] = useStoredState('arsn.radio.audioBufferMs', 60)
   const [audioAutoReconnect, setAudioAutoReconnect] = useStoredState('arsn.radio.audioAutoReconnect', true)
+  const [debugLoopEnabled, setDebugLoopEnabled] = useStoredState('arsn.radio.debugLoopEnabled', true)
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
   const [audioDeviceStatus, setAudioDeviceStatus] = useState('NOT SCANNED')
   const [bridgeError, setBridgeError] = useState<string | null>(null)
   const bridgeCursorRef = useRef(0)
   const bridgeTxStartRef = useRef<number | null>(null)
-  const bridgePlaybackQueueRef = useRef<Array<{ event: BridgeRxEvent; frame: BridgeRxFrame; playAt: number }>>([])
+  const bridgePlaybackQueueRef = useRef<Array<{ event: BridgeRxEvent; frame: BridgeRxFrame; playAt: number; playbackRate: number }>>([])
   const bridgePlaybackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bridgePlaybackClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bridgeReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -3005,6 +3006,13 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const bridgeEnqueueRef = useRef<(events: BridgeRxEvent[], playbackRate?: number) => void>(() => undefined)
   const txInputStreamRef = useRef<MediaStream | null>(null)
   const audioBufferMsRef = useRef(audioBufferMs)
+  const txCaptureContextRef = useRef<AudioContext | null>(null)
+  const txCaptureSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const txCaptureProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const txCaptureSamplesRef = useRef<number[]>([])
+  const txCaptureSampleRateRef = useRef(48000)
+  const capturedTxAnalogRef = useRef<BridgeAnalogPayload | null>(null)
+  const playRxEventAudioRef = useRef<(event: BridgeRxEvent, playbackRate: number) => void>(() => undefined)
   const previousTxModeRef = useRef(false)
   const frequencyBounds = getFrequencyBounds()
   const meshOnlineCount = MESH_NODES.filter(node => node.isOnline).length
@@ -3019,6 +3027,10 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const txModeName = txVfo === 'A' ? mode : subMode
 
   const makeTxAnalog = (durationMs: number): BridgeAnalogPayload => {
+    const captured = capturedTxAnalogRef.current
+    capturedTxAnalogRef.current = null
+    if (captured && captured.samples.length > 0) return captured
+
     const sampleRateHz = 2000
     const sampleCount = Math.max(1, Math.round(durationMs * sampleRateHz / 1000))
     const amplitude = Math.max(0.02, Math.min(0.98, micGain / 100))
@@ -3052,6 +3064,73 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
       peak: Number(peak.toFixed(5)),
       rms: Number(Math.sqrt(energy / samples.length).toFixed(5)),
     }
+  }
+
+  const startTxCapture = async () => {
+    try {
+      if (!txInputStreamRef.current?.active) {
+        txInputStreamRef.current = await navigator.mediaDevices.getUserMedia({
+          audio: txInputDeviceId === 'default' ? true : { deviceId: { exact: txInputDeviceId } },
+        })
+      }
+      const context = new AudioContext()
+      const source = context.createMediaStreamSource(txInputStreamRef.current)
+      const processor = context.createScriptProcessor(2048, 1, 1)
+      const silentGain = context.createGain()
+      silentGain.gain.value = 0
+      txCaptureSamplesRef.current = []
+      capturedTxAnalogRef.current = null
+      txCaptureSampleRateRef.current = context.sampleRate
+      processor.onaudioprocess = event => {
+        txCaptureSamplesRef.current.push(...event.inputBuffer.getChannelData(0))
+      }
+      source.connect(processor)
+      processor.connect(silentGain)
+      silentGain.connect(context.destination)
+      txCaptureContextRef.current = context
+      txCaptureSourceRef.current = source
+      txCaptureProcessorRef.current = processor
+      setAudioDeviceStatus('TX CAPTURING')
+    } catch {
+      setAudioDeviceStatus('TX MIC UNAVAILABLE · USING SIM')
+    }
+  }
+
+  const stopTxCapture = () => {
+    const inputSamples = txCaptureSamplesRef.current
+    const inputRate = txCaptureSampleRateRef.current
+    const outputRate = 8000
+    if (inputSamples.length > 0) {
+      const sampleCount = Math.max(1, Math.floor(inputSamples.length * outputRate / inputRate))
+      let energy = 0
+      let peak = 0
+      const inputScale = (txInputLevel / 100) * (micGain / 50)
+      const samples = Array.from({ length: sampleCount }, (_, index) => {
+        const inputIndex = Math.min(inputSamples.length - 1, Math.floor(index * inputRate / outputRate))
+        const sample = Number(Math.max(-1, Math.min(1, inputSamples[inputIndex] * inputScale)).toFixed(5))
+        energy += sample * sample
+        peak = Math.max(peak, Math.abs(sample))
+        return sample
+      })
+      capturedTxAnalogRef.current = {
+        domain: 'audio-baseband',
+        encoding: 'f32-normalized',
+        sampleRateHz: outputRate,
+        samplePeriodUs: 1_000_000 / outputRate,
+        channels: 1,
+        samples,
+        peak: Number(peak.toFixed(5)),
+        rms: Number(Math.sqrt(energy / samples.length).toFixed(5)),
+      }
+    }
+    txCaptureProcessorRef.current?.disconnect()
+    txCaptureSourceRef.current?.disconnect()
+    txCaptureProcessorRef.current = null
+    txCaptureSourceRef.current = null
+    txCaptureSamplesRef.current = []
+    if (txCaptureContextRef.current) void txCaptureContextRef.current.close()
+    txCaptureContextRef.current = null
+    setAudioDeviceStatus(inputSamples.length > 0 ? 'TX AUDIO QUEUED' : 'TX AUDIO EMPTY · USING SIM')
   }
 
   const [signalTarget, setSignalTarget] = useState(0)
@@ -3248,6 +3327,46 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   }, [audioBufferMs])
 
   useEffect(() => {
+    playRxEventAudioRef.current = (event, playbackRate) => {
+      if (!rxMonitorEnabled || !event.analog?.samples.length) return
+      void (async () => {
+        const context = new AudioContext()
+        const buffer = context.createBuffer(1, event.analog.samples.length, event.analog.sampleRateHz)
+        buffer.copyToChannel(Float32Array.from(event.analog.samples), 0)
+        const source = context.createBufferSource()
+        const gain = context.createGain()
+        source.buffer = buffer
+        source.playbackRate.value = playbackRate
+        gain.gain.value = rxOutputLevel / 100
+        source.connect(gain)
+
+        let outputAudio: HTMLAudioElement | null = null
+        if (rxOutputDeviceId !== 'default') {
+          const destination = context.createMediaStreamDestination()
+          outputAudio = new Audio()
+          gain.connect(destination)
+          outputAudio.srcObject = destination.stream
+          if ('setSinkId' in outputAudio) {
+            await (outputAudio as HTMLAudioElement & { setSinkId: (deviceId: string) => Promise<void> }).setSinkId(rxOutputDeviceId)
+          }
+          await outputAudio.play()
+        } else {
+          gain.connect(context.destination)
+        }
+
+        await context.resume()
+        source.start()
+        source.addEventListener('ended', () => {
+          outputAudio?.pause()
+          if (outputAudio) outputAudio.srcObject = null
+          void context.close()
+        })
+        setAudioDeviceStatus('RX AUDIO PLAYING')
+      })().catch(() => setAudioDeviceStatus('RX PLAYBACK BLOCKED'))
+    }
+  }, [rxMonitorEnabled, rxOutputDeviceId, rxOutputLevel])
+
+  useEffect(() => {
     let cancelled = false
     let inFlight = false
 
@@ -3259,6 +3378,9 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
         bridgePlaybackTimerRef.current = null
         const due = bridgePlaybackQueueRef.current.shift()
         if (due && !cancelled) {
+          if (due.frame.frameIndex === 0) {
+            playRxEventAudioRef.current(due.event, due.playbackRate)
+          }
           setBridgeLastRxEvent(due.event)
           setBridgePlaybackFrame(due.frame)
           setBridgeBufferedFrames(bridgePlaybackQueueRef.current.length)
@@ -3295,6 +3417,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
             event,
             frame,
             playAt: eventPlaybackStart + frame.offsetMs / playbackRate,
+            playbackRate,
           })
         }
       }
@@ -3397,13 +3520,15 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
       micGain,
       noiseFloor,
       analog,
+      debugLoop: debugLoopEnabled,
+      suppressRf: debugLoopEnabled,
       note: `PTT ${txModeName} ${activeFreqKhz}kHz`,
     }).then(() => {
       setBridgeError(null)
     }).catch(error => {
       setBridgeError(error instanceof Error ? error.message : 'Bridge TX submission failed')
     })
-  }, [activeFreqKhz, callsign, effectiveTxMode, micGain, noiseFloor, rfGain, txModeName, txVfo])
+  }, [activeFreqKhz, callsign, debugLoopEnabled, effectiveTxMode, micGain, noiseFloor, rfGain, txModeName, txVfo])
 
   const handleBridgeInject = () => {
     void injectBridgeRx().then(() => {
@@ -3689,8 +3814,17 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
                     <input type="checkbox" checked={audioAutoReconnect} onChange={event => setAudioAutoReconnect(event.target.checked)} style={{ accentColor: '#4ade80' }} />
                     Auto-reconnect devices
                   </label>
+                  <label className="font-mono flex items-center gap-2" style={{ color: debugLoopEnabled ? '#fbbf24' : '#4a7a4a', fontSize: 10 }}>
+                    <input type="checkbox" checked={debugLoopEnabled} onChange={event => setDebugLoopEnabled(event.target.checked)} style={{ accentColor: '#fbbf24' }} />
+                    Debug Loop · suppress RF
+                  </label>
                 </div>
               </div>
+              {debugLoopEnabled && (
+                <div className="font-mono rounded px-3 py-2" style={{ background: '#2a1b0510', border: '1px solid #713f12', color: '#d6a849', fontSize: 9 }}>
+                  LOCAL LOOPBACK ACTIVE · TX JSON tagged debugLoop=true and suppressRf=true
+                </div>
+              )}
 
               <div className="flex items-center gap-2 flex-wrap pt-3" style={{ borderTop: '1px solid #1a2e1a' }}>
                 <button type="button" onClick={() => void enableTxInput()} className="font-display rounded px-3 py-2" style={{ background: '#102010', border: '1px solid #2d6a2d', color: '#4ade80', fontSize: 9 }}>ENABLE TX INPUT</button>
@@ -3756,9 +3890,18 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
             <div style={{ borderTop: '1px solid #1a2e1a', paddingTop: 10, width: '100%' }}
               className="flex flex-col gap-2">
               <button
-                onMouseDown={() => setTxMode(true)}
-                onMouseUp={() => setTxMode(false)}
-                onMouseLeave={() => setTxMode(false)}
+                onMouseDown={() => {
+                  void startTxCapture()
+                  setTxMode(true)
+                }}
+                onMouseUp={() => {
+                  stopTxCapture()
+                  setTxMode(false)
+                }}
+                onMouseLeave={() => {
+                  if (txMode) stopTxCapture()
+                  setTxMode(false)
+                }}
                 className="font-display rounded flex flex-col items-center justify-center gap-1 transition-all w-full py-3"
                 style={{
                   background: effectiveTxMode ? '#ef444420' : '#0a1208',

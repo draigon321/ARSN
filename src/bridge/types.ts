@@ -21,6 +21,8 @@ export interface BridgeTxMessage {
   micGain: number
   noiseFloor: number
   analog: BridgeAnalogPayload
+  debugLoop: boolean
+  suppressRf: boolean
   note?: string
 }
 
@@ -39,6 +41,7 @@ export interface BridgeRxEvent {
   seq: number
   id: string
   source: "sim" | "echo"
+  debugLoop: boolean
   callsign: string
   mode: string
   freqKhz: number
@@ -47,6 +50,7 @@ export interface BridgeRxEvent {
   generatedAt: number
   durationMs: number
   frameIntervalMs: number
+  analog: BridgeAnalogPayload
   frames: BridgeRxFrame[]
 }
 

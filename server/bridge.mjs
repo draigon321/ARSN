@@ -151,6 +151,8 @@ async function processTx(rawTx) {
     rfGain: clamp(Number(rawTx.rfGain || 50), 0, 100),
     micGain: clamp(Number(rawTx.micGain || 50), 0, 100),
     noiseFloor: clamp(Number(rawTx.noiseFloor || 4), 0, 12),
+    debugLoop: rawTx.debugLoop === true,
+    suppressRf: rawTx.debugLoop === true || rawTx.suppressRf === true,
     note: rawTx.note || "",
   }
   txMessage.analog = normalizeAnalog(rawTx.analog, {
@@ -165,10 +167,15 @@ async function processTx(rawTx) {
     startedAt: txMessage.txStartedAt,
   })
 
+  if (!txMessage.debugLoop) {
+    return { id, seq: null }
+  }
+
   const rxEvent = {
     seq: ++seqCounter,
     id,
     source: "echo",
+    debugLoop: true,
     callsign: txMessage.callsign,
     mode: txMessage.mode,
     freqKhz: txMessage.freqKhz,
@@ -177,6 +184,7 @@ async function processTx(rawTx) {
     generatedAt: now,
     durationMs: txMessage.txDurationMs,
     frameIntervalMs: FRAME_TICK_MS,
+    analog: txMessage.analog,
     frames: makeFrames({
       startedAt: txMessage.txStartedAt,
       durationMs: txMessage.txDurationMs,
@@ -224,6 +232,8 @@ async function debugInject() {
     micGain: 64,
     noiseFloor: 3.8,
     note: "autonomous-debug-inject",
+    debugLoop: true,
+    suppressRf: true,
   }
   return processTx(synthetic)
 }
