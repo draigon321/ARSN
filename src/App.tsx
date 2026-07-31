@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { BAND_FREQS, getAllowedBands, getAllowedModes, getBandForFrequency, getFrequencyBounds, getRadioCountryProfile, RADIO_BANDS, RADIO_COUNTRY_PROFILES, isFrequencyAllowed } from './radioRestrictions'
 import { CHANNEL_MESSAGES, MAIL_MESSAGES, WIKI_ARTICLES } from './appSeedData'
 import { MESH_CHANNELS_INIT, MESH_MESSAGES, MESH_NODES } from './meshSeedData'
@@ -2982,7 +2982,6 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
 
   const [signalTarget, setSignalTarget] = useState(0)
   const [noiseFloor, setNoiseFloor] = useState(7)
-  const [scopeSignals, setScopeSignals] = useState<Array<{ offsetKhz: number; strength: number }>>([])
 
   const clampFrequency = (value: number) => {
     return Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, value))
@@ -3034,14 +3033,9 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
     }
   }, [signalSources, sourceEditorOpen])
 
-  // Deterministic signal model from tuned frequency + control state.
-  useEffect(() => {
+  const visibleSignals = useMemo(() => {
     const modeWidthKhz = activeMode === 'FM' ? 9 : activeMode === 'AM' ? 6 : activeMode === 'FT8' ? 1.2 : activeMode === 'CW' || activeMode === 'CWR' ? 0.45 : 2.7
-    const modePenalty = activeMode === 'DIG' || activeMode === 'FT8' ? 0.6 : 0
-    const attLoss = att === 'OFF' ? 0 : att === '10dB' ? 1.3 : 2.4
-    const agcBias = agc === 'FAST' ? 0.15 : agc === 'MID' ? 0 : -0.15
-
-    const visibleSignals = signalSources
+    return signalSources
       .map(source => {
         const distanceKhz = Math.abs(source.freqKhz - activeFreqKhz)
         const width = modeWidthKhz * (source.mode === activeMode ? 1 : 0.8)
@@ -3050,13 +3044,19 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
         const weighted = source.strength * proximity * modeMatchBoost
         return {
           offsetKhz: source.freqKhz - activeFreqKhz,
-          strength: weighted,
+          weightedStrength: weighted,
           rawStrength: source.strength,
         }
       })
-      .filter(signal => Math.abs(signal.offsetKhz) <= spectrumSpanKhz / 2 && signal.strength > 0.12)
+      .filter(signal => Math.abs(signal.offsetKhz) <= spectrumSpanKhz / 2 && signal.weightedStrength > 0.12)
+  }, [activeFreqKhz, activeMode, signalSources, spectrumSpanKhz])
 
-    const strongest = visibleSignals.reduce((max, signal) => Math.max(max, signal.strength), 0)
+  // Deterministic signal model from tuned frequency + control state.
+  useEffect(() => {
+    const modePenalty = activeMode === 'DIG' || activeMode === 'FT8' ? 0.6 : 0
+    const attLoss = att === 'OFF' ? 0 : att === '10dB' ? 1.3 : 2.4
+    const agcBias = agc === 'FAST' ? 0.15 : agc === 'MID' ? 0 : -0.15
+    const strongest = visibleSignals.reduce((max, signal) => Math.max(max, signal.weightedStrength), 0)
     const target = Math.max(0.2, Math.min(9.8,
       strongest +
       rfGain / 21 -
@@ -3070,8 +3070,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
 
     setSignalTarget(target)
     setNoiseFloor(Math.max(2, 9 - rfGain / 13 + squelch / 35 + (att !== 'OFF' ? 0.8 : 0) + (nb ? -0.2 : 0) + (nr ? -0.3 : 0)))
-    setScopeSignals(visibleSignals.map(signal => ({ offsetKhz: signal.offsetKhz, strength: Math.min(9.5, signal.rawStrength) })))
-  }, [activeFreqKhz, activeMode, agc, att, nb, nr, rfGain, signalSources, spectrumSpanKhz, squelch])
+  }, [activeMode, agc, att, nb, nr, rfGain, squelch, visibleSignals])
 
   // Animate meters based on deterministic targets.
   useEffect(() => {
@@ -3221,6 +3220,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
     label: string; active?: boolean; onClick?: () => void; color?: string
   }) => (
     <button
+      type="button"
       onClick={onClick}
       className="font-display text-xs px-2 py-1.5 rounded transition-all"
       style={{
@@ -3237,7 +3237,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
   )
 
   const FnButton = ({ label, active, onClick }: { label: string; active?: boolean; onClick?: () => void }) => (
-    <button onClick={onClick} className="font-display text-xs py-2 rounded-sm flex-1 transition-all"
+    <button type="button" onClick={onClick} className="font-display text-xs py-2 rounded-sm flex-1 transition-all"
       style={{
         background: active ? '#162016' : '#0a1208',
         border: `1px solid ${active ? '#4ade80' : '#1a2e1a'}`,
@@ -3567,7 +3567,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
         </div>
 
         {/* ── SPECTRUM SCOPE + WATERFALL ── */}
-            <SpectrumScope centerKhz={activeFreqKhz} txMode={txMode || voxLatchedTx} spanKhz={spectrumSpanKhz} hold={spectrumHold} markerOn={spectrumMarker} fixedTuning={fixedTuning || lockTuning} signals={scopeSignals} noiseFloor={noiseFloor} />
+            <SpectrumScope centerKhz={activeFreqKhz} txMode={txMode || voxLatchedTx} spanKhz={spectrumSpanKhz} hold={spectrumHold} markerOn={spectrumMarker} fixedTuning={fixedTuning || lockTuning} signals={visibleSignals.map(signal => ({ offsetKhz: signal.offsetKhz, strength: Math.min(9.5, signal.rawStrength) }))} noiseFloor={noiseFloor} />
 
         {/* ── FUNCTION KEY ROW ── */}
         <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 6, padding: '8px 12px' }}>
