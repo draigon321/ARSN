@@ -18,6 +18,7 @@ This workspace now has working local state persistence for the main user-facing 
 Implemented so far:
 
 - Persistent top-level section selection and operator callsign
+- Persistent transceiver connection choice, tuning state, and receiver controls
 - Persistent mail inbox, compose draft, and message actions
 - Reply, forward, and delete actions in mail
 - Persistent wiki search and selection state
