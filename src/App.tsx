@@ -3109,15 +3109,29 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const stopTxCapture = () => {
     const inputSamples = txCaptureSamplesRef.current
     const inputRate = txCaptureSampleRateRef.current
-    const outputRate = 8000
+    const outputRate = 16000
     if (inputSamples.length > 0) {
       const sampleCount = Math.max(1, Math.floor(inputSamples.length * outputRate / inputRate))
       let energy = 0
       let peak = 0
-      const inputScale = (txInputLevel / 100) * (micGain / 50)
+      let previousInput = 0
+      let previousFiltered = 0
+      const inputScale = Math.min(1.25, (txInputLevel / 100) * (micGain / 50))
+      const sourceSamplesPerOutput = inputRate / outputRate
       const samples = Array.from({ length: sampleCount }, (_, index) => {
-        const inputIndex = Math.min(inputSamples.length - 1, Math.floor(index * inputRate / outputRate))
-        const sample = Number(Math.max(-1, Math.min(1, inputSamples[inputIndex] * inputScale)).toFixed(5))
+        const windowStart = Math.floor(index * sourceSamplesPerOutput)
+        const windowEnd = Math.max(windowStart + 1, Math.min(inputSamples.length, Math.floor((index + 1) * sourceSamplesPerOutput)))
+        let averaged = 0
+        for (let sourceIndex = windowStart; sourceIndex < windowEnd; sourceIndex += 1) {
+          averaged += inputSamples[sourceIndex]
+        }
+        averaged /= windowEnd - windowStart
+
+        // Remove microphone DC bias, then use a soft limiter with 12% output headroom.
+        const filtered = averaged - previousInput + 0.995 * previousFiltered
+        previousInput = averaged
+        previousFiltered = filtered
+        const sample = Number((Math.tanh(filtered * inputScale) * 0.88).toFixed(5))
         energy += sample * sample
         peak = Math.max(peak, Math.abs(sample))
         return sample
