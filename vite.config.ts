@@ -35,6 +35,9 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: parseInt(process.env.PORT || '8443'),
       strictPort: true,
+      headers: {
+        'Permissions-Policy': 'microphone=(self), speaker-selection=(self)',
+      },
       proxy: {
         '/api/bridge': {
           target: process.env.ARSN_BRIDGE_URL || 'http://localhost:8787',
@@ -46,6 +49,9 @@ export default defineConfig(({ mode }) => {
     preview: {
       host: '0.0.0.0',
       port: parseInt(process.env.PORT || '8443'),
+      headers: {
+        'Permissions-Policy': 'microphone=(self), speaker-selection=(self)',
+      },
     },
   }
 })

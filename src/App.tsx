@@ -2995,6 +2995,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const [debugLoopEnabled, setDebugLoopEnabled] = useStoredState('arsn.radio.debugLoopEnabled', true)
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
   const [audioDeviceStatus, setAudioDeviceStatus] = useState('NOT SCANNED')
+  const [microphonePermission, setMicrophonePermission] = useState('UNKNOWN')
   const [bridgeError, setBridgeError] = useState<string | null>(null)
   const bridgeCursorRef = useRef(0)
   const bridgeTxStartRef = useRef<number | null>(null)
@@ -3589,6 +3590,22 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     }
   }
 
+  const inspectMicrophonePermission = async () => {
+    if (!window.isSecureContext) {
+      setMicrophonePermission('BLOCKED · INSECURE CONTEXT')
+      return
+    }
+    if (window.self !== window.top) {
+      setMicrophonePermission('CHECKING · EMBEDDED PREVIEW')
+    }
+    try {
+      const permission = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+      setMicrophonePermission(`${permission.state.toUpperCase()}${window.self !== window.top ? ' · EMBEDDED' : ''}`)
+    } catch {
+      setMicrophonePermission(`UNAVAILABLE${window.self !== window.top ? ' · EMBEDDED' : ''}`)
+    }
+  }
+
   const enableTxInput = async () => {
     unlockRxOutput()
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -3602,8 +3619,11 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
       })
       setAudioDeviceStatus('TX INPUT READY')
       await refreshAudioDevices()
-    } catch {
-      setAudioDeviceStatus('TX INPUT PERMISSION DENIED')
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : 'MediaError'
+      const message = error instanceof Error ? error.message : 'Microphone request failed'
+      setAudioDeviceStatus(`${name}: ${message}`)
+      await inspectMicrophonePermission()
     }
   }
 
@@ -3649,6 +3669,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   useEffect(() => {
     if (!radioSettingsOpen) return
     void refreshAudioDevices()
+    void inspectMicrophonePermission()
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setRadioSettingsOpen(false)
     }
@@ -3834,12 +3855,28 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
                   LOCAL LOOPBACK ACTIVE · TX JSON tagged debugLoop=true and suppressRf=true
                 </div>
               )}
+              <div className="font-mono rounded px-3 py-2" style={{ background: '#071007', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 9 }}>
+                MIC PERMISSION · {microphonePermission} · {window.isSecureContext ? 'SECURE CONTEXT' : 'INSECURE CONTEXT'}
+                {(microphonePermission.includes('DENIED') || microphonePermission.includes('EMBEDDED') || microphonePermission.includes('BLOCKED') || audioDeviceStatus.includes('NotAllowedError') || audioDeviceStatus.includes('SecurityError')) && (
+                  <div className="mt-2" style={{ color: '#fca5a5', lineHeight: 1.5 }}>
+                    Allow microphone access in the browser site controls. If this is an embedded preview, open the app directly because the parent frame may block microphone permission.
+                    <button
+                      type="button"
+                      onClick={() => window.open(window.location.href, '_blank', 'noopener,noreferrer')}
+                      className="font-display rounded px-2 py-1 ml-2"
+                      style={{ background: '#201008', border: '1px solid #7f1d1d', color: '#fca5a5', fontSize: 8 }}
+                    >
+                      OPEN DIRECT
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <div className="flex items-center gap-2 flex-wrap pt-3" style={{ borderTop: '1px solid #1a2e1a' }}>
                 <button type="button" onClick={() => void enableTxInput()} className="font-display rounded px-3 py-2" style={{ background: '#102010', border: '1px solid #2d6a2d', color: '#4ade80', fontSize: 9 }}>ENABLE TX INPUT</button>
                 <button type="button" onClick={() => void testRxOutput().catch(() => setAudioDeviceStatus('OUTPUT TEST FAILED'))} className="font-display rounded px-3 py-2" style={{ background: '#081820', border: '1px solid #164e63', color: '#22d3ee', fontSize: 9 }}>TEST RX OUTPUT</button>
                 <button type="button" onClick={() => void refreshAudioDevices()} className="font-display rounded px-3 py-2" style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 9 }}>REFRESH DEVICES</button>
-                <span className="font-mono ml-auto" style={{ color: audioDeviceStatus.includes('FAILED') || audioDeviceStatus.includes('DENIED') ? '#ef4444' : '#2d6a2d', fontSize: 9 }}>{audioDeviceStatus}</span>
+                <span className="font-mono ml-auto" style={{ color: audioDeviceStatus.includes('FAILED') || audioDeviceStatus.includes('DENIED') || audioDeviceStatus.includes('Error') || audioDeviceStatus.includes('BLOCKED') ? '#ef4444' : '#2d6a2d', fontSize: 9, maxWidth: 220, textAlign: 'right' }}>{audioDeviceStatus}</span>
               </div>
             </div>
           </div>
