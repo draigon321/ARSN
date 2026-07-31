@@ -3013,6 +3013,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   const txCaptureSampleRateRef = useRef(48000)
   const capturedTxAnalogRef = useRef<BridgeAnalogPayload | null>(null)
   const playRxEventAudioRef = useRef<(event: BridgeRxEvent, playbackRate: number) => void>(() => undefined)
+  const rxAudioContextRef = useRef<AudioContext | null>(null)
   const previousTxModeRef = useRef(false)
   const frequencyBounds = getFrequencyBounds()
   const meshOnlineCount = MESH_NODES.filter(node => node.isOnline).length
@@ -3067,13 +3068,15 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   }
 
   const startTxCapture = async () => {
+    const context = new AudioContext()
+    txCaptureContextRef.current = context
+    void context.resume()
     try {
       if (!txInputStreamRef.current?.active) {
         txInputStreamRef.current = await navigator.mediaDevices.getUserMedia({
           audio: txInputDeviceId === 'default' ? true : { deviceId: { exact: txInputDeviceId } },
         })
       }
-      const context = new AudioContext()
       const source = context.createMediaStreamSource(txInputStreamRef.current)
       const processor = context.createScriptProcessor(2048, 1, 1)
       const silentGain = context.createGain()
@@ -3087,13 +3090,21 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
       source.connect(processor)
       processor.connect(silentGain)
       silentGain.connect(context.destination)
-      txCaptureContextRef.current = context
       txCaptureSourceRef.current = source
       txCaptureProcessorRef.current = processor
       setAudioDeviceStatus('TX CAPTURING')
     } catch {
+      void context.close()
+      txCaptureContextRef.current = null
       setAudioDeviceStatus('TX MIC UNAVAILABLE · USING SIM')
     }
+  }
+
+  const unlockRxOutput = () => {
+    if (!rxAudioContextRef.current || rxAudioContextRef.current.state === 'closed') {
+      rxAudioContextRef.current = new AudioContext()
+    }
+    void rxAudioContextRef.current.resume()
   }
 
   const stopTxCapture = () => {
@@ -3330,7 +3341,15 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     playRxEventAudioRef.current = (event, playbackRate) => {
       if (!rxMonitorEnabled || !event.analog?.samples.length) return
       void (async () => {
-        const context = new AudioContext()
+        const context = rxAudioContextRef.current
+        if (!context || context.state === 'closed') {
+          setAudioDeviceStatus('RX LOCKED · PRESS PTT OR TEST OUTPUT')
+          return
+        }
+        await context.resume()
+        if (rxOutputDeviceId !== 'default' && 'setSinkId' in context) {
+          await (context as AudioContext & { setSinkId: (deviceId: string) => Promise<void> }).setSinkId(rxOutputDeviceId)
+        }
         const buffer = context.createBuffer(1, event.analog.samples.length, event.analog.sampleRateHz)
         buffer.copyToChannel(Float32Array.from(event.analog.samples), 0)
         const source = context.createBufferSource()
@@ -3340,26 +3359,13 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
         gain.gain.value = rxOutputLevel / 100
         source.connect(gain)
 
-        let outputAudio: HTMLAudioElement | null = null
-        if (rxOutputDeviceId !== 'default') {
-          const destination = context.createMediaStreamDestination()
-          outputAudio = new Audio()
-          gain.connect(destination)
-          outputAudio.srcObject = destination.stream
-          if ('setSinkId' in outputAudio) {
-            await (outputAudio as HTMLAudioElement & { setSinkId: (deviceId: string) => Promise<void> }).setSinkId(rxOutputDeviceId)
-          }
-          await outputAudio.play()
-        } else {
-          gain.connect(context.destination)
-        }
+        gain.connect(context.destination)
 
-        await context.resume()
         source.start()
         source.addEventListener('ended', () => {
-          outputAudio?.pause()
-          if (outputAudio) outputAudio.srcObject = null
-          void context.close()
+          source.disconnect()
+          gain.disconnect()
+          setAudioDeviceStatus('RX AUDIO READY')
         })
         setAudioDeviceStatus('RX AUDIO PLAYING')
       })().catch(() => setAudioDeviceStatus('RX PLAYBACK BLOCKED'))
@@ -3584,6 +3590,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   }
 
   const enableTxInput = async () => {
+    unlockRxOutput()
     if (!navigator.mediaDevices?.getUserMedia) {
       setAudioDeviceStatus('MIC INPUT UNSUPPORTED')
       return
@@ -3601,6 +3608,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
   }
 
   const testRxOutput = async () => {
+    unlockRxOutput()
     const AudioContextClass = window.AudioContext
     if (!AudioContextClass) {
       setAudioDeviceStatus('AUDIO OUTPUT UNSUPPORTED')
@@ -3634,6 +3642,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     return () => {
       if (bridgeReplayTimerRef.current) clearTimeout(bridgeReplayTimerRef.current)
       txInputStreamRef.current?.getTracks().forEach(track => track.stop())
+      if (rxAudioContextRef.current) void rxAudioContextRef.current.close()
     }
   }, [])
 
@@ -3891,6 +3900,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
               className="flex flex-col gap-2">
               <button
                 onMouseDown={() => {
+                  unlockRxOutput()
                   void startTxCapture()
                   setTxMode(true)
                 }}
