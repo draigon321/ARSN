@@ -146,6 +146,27 @@ const RADIO_CONNECTIONS = [
   'Hamlib / rigctld', 'RigPi (MFJ)', 'Direct (No CAT)',
 ]
 
+interface RadioConnectionSettings {
+  endpoint: string
+  baud: string
+  address: string
+  pttMode: 'CAT' | 'VOX' | 'RTS' | 'DTR'
+  timeoutMs: string
+}
+
+function getConnectionSettingsDefaults(connection: string): RadioConnectionSettings {
+  if (connection.includes('Hamlib')) {
+    return { endpoint: '127.0.0.1:4532', baud: 'n/a', address: 'n/a', pttMode: 'CAT', timeoutMs: '1200' }
+  }
+  if (connection.includes('FlexRadio') || connection.includes('RS-BA1') || connection.includes('RigPi')) {
+    return { endpoint: '192.168.1.100', baud: 'n/a', address: 'auto', pttMode: 'CAT', timeoutMs: '1500' }
+  }
+  if (connection.includes('SDR')) {
+    return { endpoint: 'usb:auto', baud: 'n/a', address: 'n/a', pttMode: 'VOX', timeoutMs: '1000' }
+  }
+  return { endpoint: 'COM3', baud: '19200', address: '94', pttMode: 'CAT', timeoutMs: '1000' }
+}
+
 function TopBar({
   section,
   callsign,
@@ -170,6 +191,12 @@ function TopBar({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(callsign)
   const [conn, setConn] = useStoredState('arsn.radio.connection', 'Icom USB Control (CI-V)')
+  const [connPickerOpen, setConnPickerOpen] = useState(false)
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [editingConn, setEditingConn] = useState(conn)
+  const [connectionSettings, setConnectionSettings] = useStoredState<Record<string, RadioConnectionSettings>>('arsn.radio.connectionSettings', {})
+  const [settingsDraft, setSettingsDraft] = useState<RadioConnectionSettings>(() => connectionSettings[conn] ?? getConnectionSettingsDefaults(conn))
+  const connPickerRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const countryProfile = getRadioCountryProfile(country)
 
@@ -178,6 +205,39 @@ function TopBar({
       onLicenseChange(countryProfile.defaultLicense)
     }
   }, [country, countryProfile, license, onLicenseChange])
+
+  useEffect(() => {
+    const onDocumentPointer = (event: MouseEvent) => {
+      if (!connPickerRef.current) return
+      if (!connPickerRef.current.contains(event.target as Node)) {
+        setConnPickerOpen(false)
+      }
+    }
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setConnPickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocumentPointer)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('mousedown', onDocumentPointer)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [])
+
+  const openConnectionSettings = (targetConnection: string) => {
+    const defaults = getConnectionSettingsDefaults(targetConnection)
+    setEditingConn(targetConnection)
+    setSettingsDraft(connectionSettings[targetConnection] ?? defaults)
+    setSettingsModalOpen(true)
+    setConnPickerOpen(false)
+  }
+
+  const saveConnectionSettings = () => {
+    setConnectionSettings(prev => ({ ...prev, [editingConn]: settingsDraft }))
+    setSettingsModalOpen(false)
+  }
 
   const commit = () => {
     const v = draft.trim().toUpperCase()
@@ -204,14 +264,39 @@ function TopBar({
         {section === 'radio' && (
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full" style={{ background: connected ? '#4ade80' : '#374151', boxShadow: connected ? '0 0 4px #4ade80' : 'none', flexShrink: 0 }} />
-            <select
-              value={conn}
-              onChange={e => { setConn(e.target.value); setConnected(false) }}
-              className="font-mono text-xs px-2 py-0.5 rounded"
-              style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 10, outline: 'none', cursor: 'pointer' }}
-            >
-              {RADIO_CONNECTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
+            <div className="relative" ref={connPickerRef}>
+              <button
+                onClick={() => setConnPickerOpen(v => !v)}
+                className="font-mono text-xs px-2 py-0.5 rounded flex items-center gap-2"
+                style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4a7a4a', fontSize: 10, outline: 'none', cursor: 'pointer', minWidth: 215, justifyContent: 'space-between' }}
+                title="Select connection">
+                <span className="truncate">{conn}</span>
+                <span style={{ color: '#2d6a2d', fontSize: 11 }}>{connPickerOpen ? '▲' : '▼'}</span>
+              </button>
+              {connPickerOpen && (
+                <div
+                  className="absolute z-50 mt-1 rounded"
+                  style={{ background: '#0a1208', border: '1px solid #2d4d2d', minWidth: 320, maxHeight: 420, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.65)' }}>
+                  {RADIO_CONNECTIONS.map(option => (
+                    <div key={option} className="flex items-center" style={{ borderBottom: '1px solid #0f1a0f' }}>
+                      <button
+                        onClick={() => { setConn(option); setConnected(false); setConnPickerOpen(false) }}
+                        className="flex-1 text-left font-mono text-xs px-3 py-2"
+                        style={{ color: conn === option ? '#d1fae5' : '#4a7a4a', background: conn === option ? '#1f2937' : 'transparent', cursor: 'pointer' }}>
+                        {option}
+                      </button>
+                      <button
+                        onClick={() => openConnectionSettings(option)}
+                        className="font-display text-xs px-2 py-1 rounded mr-2"
+                        title={`Edit ${option} settings`}
+                        style={{ background: '#0f1a0f', border: '1px solid #1f3320', color: '#4ade80', fontSize: 9, letterSpacing: '0.06em', cursor: 'pointer' }}>
+                        ✎
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setConnected(p => !p)}
               className="font-display text-xs px-2 py-0.5 rounded transition-all"
@@ -292,6 +377,94 @@ function TopBar({
           <span className="font-mono text-xs" style={{ color: '#2d6a2d' }}>NET OK</span>
         </div>
       </div>
+
+      {settingsModalOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setSettingsModalOpen(false)}>
+          <div
+            style={{ background: '#0a0d0a', border: '1px solid #2d4d2d', borderRadius: 8, padding: 20, width: 430, boxShadow: '0 8px 40px rgba(0,0,0,0.9)' }}
+            onClick={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="font-display text-xs" style={{ color: '#4ade80', fontSize: 11, letterSpacing: '0.12em' }}>CONNECTION SETTINGS</div>
+                <div className="font-mono text-xs mt-1" style={{ color: '#2d6a2d', fontSize: 10 }}>{editingConn}</div>
+              </div>
+              <button
+                onClick={() => setSettingsModalOpen(false)}
+                style={{ background: 'transparent', border: 'none', color: '#2d6a2d', fontSize: 16, cursor: 'pointer' }}>
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="font-display block mb-1" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.08em' }}>ENDPOINT / PORT</label>
+                <input
+                  className="w-full px-3 py-2 rounded font-mono text-xs"
+                  value={settingsDraft.endpoint}
+                  onChange={event => setSettingsDraft(prev => ({ ...prev, endpoint: event.target.value }))}
+                  placeholder="COM3 or host:port"
+                />
+              </div>
+              <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                <div>
+                  <label className="font-display block mb-1" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.08em' }}>BAUD</label>
+                  <input
+                    className="w-full px-3 py-2 rounded font-mono text-xs"
+                    value={settingsDraft.baud}
+                    onChange={event => setSettingsDraft(prev => ({ ...prev, baud: event.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="font-display block mb-1" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.08em' }}>ADDRESS</label>
+                  <input
+                    className="w-full px-3 py-2 rounded font-mono text-xs"
+                    value={settingsDraft.address}
+                    onChange={event => setSettingsDraft(prev => ({ ...prev, address: event.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                <div>
+                  <label className="font-display block mb-1" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.08em' }}>PTT MODE</label>
+                  <select
+                    className="w-full px-3 py-2 rounded font-mono text-xs"
+                    value={settingsDraft.pttMode}
+                    onChange={event => setSettingsDraft(prev => ({ ...prev, pttMode: event.target.value as RadioConnectionSettings['pttMode'] }))}>
+                    {['CAT', 'VOX', 'RTS', 'DTR'].map(mode => <option key={mode}>{mode}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-display block mb-1" style={{ color: '#2d6a2d', fontSize: 8, letterSpacing: '0.08em' }}>TIMEOUT (ms)</label>
+                  <input
+                    className="w-full px-3 py-2 rounded font-mono text-xs"
+                    value={settingsDraft.timeoutMs}
+                    onChange={event => setSettingsDraft(prev => ({ ...prev, timeoutMs: event.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={saveConnectionSettings}
+                className="flex-1 font-display text-xs py-2 rounded"
+                style={{ background: '#162016', border: '1px solid #4ade80', color: '#4ade80', fontSize: 10, letterSpacing: '0.1em' }}>
+                SAVE
+              </button>
+              <button
+                onClick={() => {
+                  setSettingsDraft(getConnectionSettingsDefaults(editingConn))
+                }}
+                className="font-display text-xs py-2 px-3 rounded"
+                style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#2d6a2d', fontSize: 10, letterSpacing: '0.08em' }}>
+                RESET
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
