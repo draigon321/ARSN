@@ -167,6 +167,14 @@ function getConnectionSettingsDefaults(connection: string): RadioConnectionSetti
   return { endpoint: 'COM3', baud: '19200', address: '94', pttMode: 'CAT', timeoutMs: '1000' }
 }
 
+function signalLabelFromSMeter(level: number) {
+  return `S${Math.max(0, Math.min(9, Math.round(level)))}`
+}
+
+function signalBarsFromSMeter(level: number) {
+  return Math.max(0, Math.min(5, Math.round(level / 2)))
+}
+
 function TopBar({
   section,
   callsign,
@@ -177,6 +185,8 @@ function TopBar({
   onLicenseChange,
   emergencyOverride,
   onEmergencyOverrideChange,
+  signalLevel,
+  netStatus,
 }: {
   section: NavSection
   callsign: string
@@ -187,6 +197,8 @@ function TopBar({
   onLicenseChange: (v: string) => void
   emergencyOverride: boolean
   onEmergencyOverrideChange: (v: boolean) => void
+  signalLevel: number
+  netStatus: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(callsign)
@@ -254,6 +266,9 @@ function TopBar({
   }
   const now = new Date()
   const utc = now.toUTCString().split(' ').slice(4, 5)[0]
+  const signalBars = signalBarsFromSMeter(signalLevel)
+  const signalLabel = signalLabelFromSMeter(signalLevel)
+  const linkOk = connected && netStatus
   return (
     <div style={{ background: '#0d150d', borderBottom: '1px solid #1f3320' }}
       className="flex items-center justify-between px-4 py-2 shrink-0">
@@ -369,12 +384,12 @@ function TopBar({
           {utc} UTC
         </div>
         <div className="flex items-center gap-1.5">
-          <SignalBars strength={4} />
-          <span className="font-mono text-xs" style={{ color: '#6ee7b7' }}>S7</span>
+          <SignalBars strength={signalBars} />
+          <span className="font-mono text-xs" style={{ color: '#6ee7b7' }}>{signalLabel}</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="w-2 h-2 rounded-sm" style={{ background: '#1f3320' }} />
-          <span className="font-mono text-xs" style={{ color: '#2d6a2d' }}>NET OK</span>
+          <div className="w-2 h-2 rounded-sm" style={{ background: linkOk ? '#4ade80' : '#1f3320', boxShadow: linkOk ? '0 0 4px #4ade80' : 'none' }} />
+          <span className="font-mono text-xs" style={{ color: linkOk ? '#4ade80' : '#2d6a2d' }}>{linkOk ? 'NET OK' : 'NET WAIT'}</span>
         </div>
       </div>
 
@@ -2639,6 +2654,21 @@ interface SavedFrequency {
   mode: string
 }
 
+interface RadioTelemetry {
+  txMode: boolean
+  sMeter: number
+  power: number
+  mainFreqKhz: number
+  mode: string
+  subFreqKhz: number
+  subMode: string
+  activeVfo: 'A' | 'B'
+  tuningStep: number
+  frequencyAllowed: boolean
+  meshOnlineCount: number
+  meshTotalCount: number
+}
+
 function SMeter({ level }: { level: number }) {
   // level 0–9 (S units) + 10, 20, 40, 60 over S9
   const segments = [1,2,3,4,5,6,7,8,9,'10','20','40','60']
@@ -2905,7 +2935,7 @@ function VFOKnob({ onChange }: { onChange: (delta: number) => void }) {
   )
 }
 
-function RadioSection({ country, license, emergencyOverride }: { country: string; license: string; emergencyOverride: boolean }) {
+function RadioSection({ country, license, emergencyOverride, onTelemetryChange }: { country: string; license: string; emergencyOverride: boolean; onTelemetryChange: (telemetry: RadioTelemetry) => void }) {
   const [freqKhz, setFreqKhz] = useStoredState('arsn.radio.freqKhz', 14200)
   const [subFreqKhz, setSubFreqKhz] = useStoredState('arsn.radio.subFreqKhz', 7074)
   const [mode, setMode] = useStoredState('arsn.radio.mode', 'USB')
@@ -2936,79 +2966,115 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
   const [spectrumHold, setSpectrumHold] = useStoredState('arsn.radio.spectrumHold', false)
   const [spectrumMarker, setSpectrumMarker] = useStoredState('arsn.radio.spectrumMarker', true)
   const [fixedTuning, setFixedTuning] = useStoredState('arsn.radio.fixedTuning', false)
+  const [tuningStep, setTuningStep] = useStoredState('arsn.radio.tuningStep', 100)
   const frequencyBounds = getFrequencyBounds()
+  const meshOnlineCount = MESH_NODES.filter(node => node.isOnline).length
+  const activeFreqKhz = vfoA ? freqKhz : subFreqKhz
+  const activeMode = vfoA ? mode : subMode
+
+  const clampFrequency = (value: number) => {
+    return Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, value))
+  }
+
+  const setActiveFrequency = (updater: (current: number) => number) => {
+    if (vfoA) {
+      setFreqKhz(prev => clampFrequency(updater(prev)))
+      return
+    }
+    setSubFreqKhz(prev => clampFrequency(updater(prev)))
+  }
+
+  const setActiveMode = (nextMode: string) => {
+    if (vfoA) {
+      setMode(nextMode)
+      return
+    }
+    setSubMode(nextMode)
+  }
 
   // Animate S-meter
   useEffect(() => {
     const id = setInterval(() => {
       if (txMode) {
-        setPower(Math.min(100, 85 + Math.random() * 15))
+        const targetPower = Math.min(100, Math.max(6, micGain + (mode === 'FM' ? 8 : 0) + (tunerOn ? 4 : 0) + Math.random() * 10))
+        setPower(prev => prev + (targetPower - prev) * 0.4)
         setSMeter(0)
       } else {
-        setPower(0)
+        const attLoss = att === 'OFF' ? 0 : att === '10dB' ? 1.2 : 2
+        const targetSignal = Math.max(0.2, Math.min(9.8,
+          1.2 +
+          rfGain / 18 -
+          squelch / 28 -
+          attLoss +
+          (nb ? 0.25 : 0) +
+          (nr ? 0.35 : 0) +
+          (Math.random() * 1.6)
+        ))
+        setPower(prev => prev * 0.3)
         setSMeter(prev => {
-          const target = 5 + Math.random() * 5
-          return prev + (target - prev) * 0.3
+          return prev + (targetSignal - prev) * 0.28
         })
       }
     }, 150)
     return () => clearInterval(id)
-  }, [txMode])
+  }, [txMode, micGain, mode, tunerOn, att, nb, nr, rfGain, squelch])
 
   const handleVfoTurn = (delta: number) => {
-    setFreqKhz(prev => Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, prev + delta)))
+    if (fixedTuning) return
+    setActiveFrequency(prev => prev + delta * tuningStep)
   }
 
   const tuneToFrequency = (khz: number, nextMode?: string) => {
-    setFreqKhz(khz)
-    const matchedBand = getBandForFrequency(khz)
+    const clampedKhz = clampFrequency(khz)
+    setActiveFrequency(() => clampedKhz)
+    const matchedBand = getBandForFrequency(clampedKhz)
     if (matchedBand) {
       setBand(matchedBand)
       const allowedModes = getAllowedModes(country, license, matchedBand)
       if (nextMode && allowedModes.includes(nextMode)) {
-        setMode(nextMode)
-      } else if (!allowedModes.includes(mode) && allowedModes[0]) {
-        setMode(allowedModes[0])
+        setActiveMode(nextMode)
+      } else if (!allowedModes.includes(activeMode) && allowedModes[0]) {
+        setActiveMode(allowedModes[0])
       }
     }
   }
 
   const selectBand = (b: string) => {
     setBand(b)
-    setFreqKhz(BAND_FREQS[b])
+    setActiveFrequency(() => BAND_FREQS[b])
     const allowedModes = getAllowedModes(country, license, b)
-    const nextMode = allowedModes.includes(mode) ? mode : allowedModes[0]
-    if (nextMode) setMode(nextMode)
+    const nextMode = allowedModes.includes(activeMode) ? activeMode : allowedModes[0]
+    if (nextMode) setActiveMode(nextMode)
   }
 
   useEffect(() => {
-    const matchedBand = getBandForFrequency(freqKhz)
+    const matchedBand = getBandForFrequency(activeFreqKhz)
     if (matchedBand && matchedBand !== band) {
       setBand(matchedBand)
     }
-  }, [band, freqKhz])
+  }, [activeFreqKhz, band])
 
   useEffect(() => {
     const allowedModes = getAllowedModes(country, license, band)
-    if (allowedModes.length > 0 && !allowedModes.includes(mode)) {
-      setMode(allowedModes[0])
+    if (allowedModes.length > 0 && !allowedModes.includes(activeMode)) {
+      setActiveMode(allowedModes[0])
     }
-  }, [band, country, license, mode])
+  }, [activeMode, band, country, license, vfoA])
 
   const saveCurrentFrequency = () => {
-    const nextLabel = `${band} ${mode}`
+    const nextLabel = `${band} ${activeMode}`
     setSavedFrequencies(prev => {
-      const existing = prev.find(entry => entry.freqKhz === freqKhz && entry.mode === mode)
+      const existing = prev.find(entry => entry.freqKhz === activeFreqKhz && entry.mode === activeMode)
       if (existing) {
         return prev.map(entry => entry.id === existing.id ? { ...entry, label: nextLabel } : entry)
       }
-      return [{ id: Date.now(), label: nextLabel, freqKhz, mode }, ...prev].slice(0, 8)
+      return [{ id: Date.now(), label: nextLabel, freqKhz: activeFreqKhz, mode: activeMode }, ...prev].slice(0, 8)
     })
   }
 
   const recallFrequency = (entry: SavedFrequency) => {
-    setFreqKhz(entry.freqKhz)
-    setMode(entry.mode)
+    setActiveFrequency(() => entry.freqKhz)
+    setActiveMode(entry.mode)
     setBand(getBandForFrequency(entry.freqKhz) || band)
   }
 
@@ -3018,7 +3084,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
 
   const allowedBands = getAllowedBands(country, license)
   const allowedModes = getAllowedModes(country, license, band)
-  const frequencyAllowed = emergencyOverride || isFrequencyAllowed(country, license, freqKhz)
+  const frequencyAllowed = emergencyOverride || isFrequencyAllowed(country, license, activeFreqKhz)
   const functionKeys = [12.5, 25, 50, 100]
 
   const cycleSpan = () => {
@@ -3031,6 +3097,23 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
   const recallPreset = (freq: number, presetMode: string) => {
     tuneToFrequency(freq, presetMode)
   }
+
+  useEffect(() => {
+    onTelemetryChange({
+      txMode,
+      sMeter,
+      power,
+      mainFreqKhz: freqKhz,
+      mode,
+      subFreqKhz,
+      subMode,
+      activeVfo: vfoA ? 'A' : 'B',
+      tuningStep,
+      frequencyAllowed,
+      meshOnlineCount,
+      meshTotalCount: MESH_NODES.length,
+    })
+  }, [freqKhz, frequencyAllowed, meshOnlineCount, mode, onTelemetryChange, power, sMeter, subFreqKhz, subMode, tuningStep, txMode, vfoA])
 
   const fmtFreq = (khz: number) => {
     const mhz = (khz / 1000).toFixed(3)
@@ -3098,9 +3181,15 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
             <div className="flex gap-1">
               {[1, 10, 100, 1000].map(step => (
                 <button key={step}
-                  onClick={() => setFreqKhz(f => Math.round(f / step) * step)}
+                  onClick={() => setTuningStep(step)}
                   className="font-display text-xs px-2 py-0.5 rounded"
-                  style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#2d6a2d', fontSize: 8 }}>
+                  style={{
+                    background: tuningStep === step ? '#162016' : '#0a1208',
+                    border: `1px solid ${tuningStep === step ? '#4ade80' : '#1a2e1a'}`,
+                    color: tuningStep === step ? '#4ade80' : '#2d6a2d',
+                    boxShadow: tuningStep === step ? '0 0 6px #4ade8020' : 'none',
+                    fontSize: 8,
+                  }}>
                   {step < 1000 ? `${step}Hz` : '1kHz'}
                 </button>
               ))}
@@ -3214,11 +3303,11 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
               <div className="text-right">
                 <div className="flex items-center justify-end gap-2 mb-1">
                   <span className="font-display text-xs px-1.5 py-0.5 rounded"
-                    style={{ background: '#0a1a0a', color: '#2d6a2d', fontSize: 9, border: '1px solid #1a2e1a' }}>
+                    style={{ background: !vfoA ? '#4ade8020' : '#0a1a0a', color: !vfoA ? '#4ade80' : '#2d6a2d', fontSize: 9, border: `1px solid ${!vfoA ? '#4ade80' : '#1a2e1a'}` }}>
                     VFO-B
                   </span>
                   <span className="font-display text-xs px-1.5 py-0.5 rounded"
-                    style={{ background: '#0a1a0a', color: '#2d6a2d', fontSize: 9, border: '1px solid #1a2e1a' }}>
+                    style={{ background: '#0a1a0a', color: !vfoA ? '#22d3ee' : '#2d6a2d', fontSize: 9, border: '1px solid #1a2e1a' }}>
                     {subMode}
                   </span>
                 </div>
@@ -3237,15 +3326,15 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
               <div key={ri} className="flex gap-1">
               {row.map(m => (
                 <button key={m}
-                  onClick={() => { if (emergencyOverride || allowedModes.includes(m)) setMode(m) }}
+                  onClick={() => { if (emergencyOverride || allowedModes.includes(m)) setActiveMode(m) }}
                   disabled={!emergencyOverride && !allowedModes.includes(m)}
                   className="font-display text-xs px-2.5 py-1 rounded transition-all"
                   style={{
-                    background: !emergencyOverride && !allowedModes.includes(m) ? '#081008' : mode === m ? '#162016' : '#0a1208',
-                    border: `1px solid ${mode === m && (emergencyOverride || allowedModes.includes(m)) ? '#4ade80' : !emergencyOverride && !allowedModes.includes(m) ? '#1b1f1b' : '#1a2e1a'}`,
-                    color: !emergencyOverride && !allowedModes.includes(m) ? '#374151' : mode === m ? '#4ade80' : '#2d6a2d',
+                    background: !emergencyOverride && !allowedModes.includes(m) ? '#081008' : activeMode === m ? '#162016' : '#0a1208',
+                    border: `1px solid ${activeMode === m && (emergencyOverride || allowedModes.includes(m)) ? '#4ade80' : !emergencyOverride && !allowedModes.includes(m) ? '#1b1f1b' : '#1a2e1a'}`,
+                    color: !emergencyOverride && !allowedModes.includes(m) ? '#374151' : activeMode === m ? '#4ade80' : '#2d6a2d',
                     fontSize: 10, letterSpacing: '0.06em',
-                    boxShadow: mode === m && (emergencyOverride || allowedModes.includes(m)) ? '0 0 8px #4ade8030' : 'none',
+                    boxShadow: activeMode === m && (emergencyOverride || allowedModes.includes(m)) ? '0 0 8px #4ade8030' : 'none',
                     opacity: !emergencyOverride && !allowedModes.includes(m) ? 0.45 : 1,
                     cursor: !emergencyOverride && !allowedModes.includes(m) ? 'not-allowed' : 'pointer',
                   }}>
@@ -3269,7 +3358,15 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <CtrlButton label="VFO A/B" onClick={() => setVfoA(p => !p)} />
-                <CtrlButton label="A→B" onClick={() => setSubFreqKhz(freqKhz)} />
+                <CtrlButton label={vfoA ? 'A→B' : 'B→A'} onClick={() => {
+                  if (vfoA) {
+                    setSubFreqKhz(freqKhz)
+                    setSubMode(mode)
+                    return
+                  }
+                  setFreqKhz(subFreqKhz)
+                  setMode(subMode)
+                }} />
                 <CtrlButton label="LOCK" />
                 <CtrlButton label="MEMO" />
                 <CtrlButton label="SCAN" />
@@ -3285,13 +3382,13 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
                 type="number"
                 className="px-2 py-1 rounded font-mono text-sm"
                 style={{ background: '#020602', border: `1px solid ${frequencyAllowed ? '#1f3320' : '#ef4444'}`, color: frequencyAllowed ? '#4ade80' : '#fca5a5', width: 110 }}
-                value={freqKhz}
-                onChange={e => setFreqKhz(Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, +e.target.value)))}
+                value={activeFreqKhz}
+                onChange={e => setActiveFrequency(() => +e.target.value)}
               />
               <div className="flex gap-1 flex-wrap">
                 {[[-100, '-100'], [-10, '-10'], [-1, '-1'], [1, '+1'], [10, '+10'], [100, '+100']].map(([delta, label]) => (
                   <button key={label}
-                    onClick={() => setFreqKhz(f => Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, f + +delta)))}
+                    onClick={() => setActiveFrequency(f => f + +delta)}
                     className="font-display text-xs px-2 py-1 rounded"
                     style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#2d6a2d', fontSize: 9 }}>
                     {label}
@@ -3299,7 +3396,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
                 ))}
               </div>
               <span className="font-mono text-xs ml-auto" style={{ color: '#2d6a2d' }}>
-                λ = {freqKhz > 0 ? (300000 / freqKhz).toFixed(2) : '—'} m
+                λ = {activeFreqKhz > 0 ? (300000 / activeFreqKhz).toFixed(2) : '—'} m
               </span>
             </div>
             <div className="font-mono text-xs" style={{ color: frequencyAllowed ? '#2d6a2d' : '#ef4444', marginTop: 4 }}>
@@ -3359,7 +3456,7 @@ function RadioSection({ country, license, emergencyOverride }: { country: string
         </div>
 
         {/* ── SPECTRUM SCOPE + WATERFALL ── */}
-            <SpectrumScope centerKhz={freqKhz} txMode={txMode} spanKhz={spectrumSpanKhz} hold={spectrumHold} />
+            <SpectrumScope centerKhz={activeFreqKhz} txMode={txMode} spanKhz={spectrumSpanKhz} hold={spectrumHold} markerOn={spectrumMarker} fixedTuning={fixedTuning} />
 
         {/* ── FUNCTION KEY ROW ── */}
         <div style={{ background: '#040804', border: '1px solid #1a2e1a', borderRadius: 6, padding: '8px 12px' }}>
@@ -3434,6 +3531,25 @@ export default function App() {
   const [country, setCountry] = useStoredState('arsn.radio.country', 'United States')
   const [license, setLicense] = useStoredState('arsn.radio.license', 'General')
   const [emergencyOverride, setEmergencyOverride] = useStoredState('arsn.radio.emergencyOverride', false)
+  const [radioTelemetry, setRadioTelemetry] = useState<RadioTelemetry>({
+    txMode: false,
+    sMeter: 7,
+    power: 0,
+    mainFreqKhz: 14200,
+    mode: 'USB',
+    subFreqKhz: 7074,
+    subMode: 'FT8',
+    activeVfo: 'A',
+    tuningStep: 100,
+    frequencyAllowed: true,
+    meshOnlineCount: MESH_NODES.filter(node => node.isOnline).length,
+    meshTotalCount: MESH_NODES.length,
+  })
+
+  const meshHealthy = radioTelemetry.meshOnlineCount > 0
+  const signalLabel = signalLabelFromSMeter(radioTelemetry.sMeter)
+  const signalBars = signalBarsFromSMeter(radioTelemetry.sMeter)
+  const mainFreqMhz = (radioTelemetry.mainFreqKhz / 1000).toFixed(3)
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#080c08', overflow: 'hidden' }}>
@@ -3454,16 +3570,16 @@ export default function App() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-2 py-1 rounded" style={{ background: '#0d150d', border: '1px solid #1f3320' }}>
-            <div className="status-dot status-online" />
-            <span className="font-mono text-xs" style={{ color: '#4ade80' }}>MESH OK</span>
+            <div className="status-dot" style={{ background: meshHealthy ? '#4ade80' : '#ef4444', boxShadow: meshHealthy ? '0 0 6px #4ade80' : '0 0 6px #ef4444' }} />
+            <span className="font-mono text-xs" style={{ color: meshHealthy ? '#4ade80' : '#ef4444' }}>{meshHealthy ? `MESH ${radioTelemetry.meshOnlineCount}/${radioTelemetry.meshTotalCount}` : 'MESH DOWN'}</span>
           </div>
           <div className="flex items-center gap-2 px-2 py-1 rounded" style={{ background: '#0d150d', border: '1px solid #1f3320' }}>
-            <div className="status-dot" style={{ background: '#22d3ee', boxShadow: '0 0 6px #22d3ee' }} />
-            <span className="font-mono text-xs" style={{ color: '#22d3ee' }}>RX</span>
+            <div className="status-dot" style={{ background: radioTelemetry.txMode ? '#1f3320' : '#22d3ee', boxShadow: !radioTelemetry.txMode ? '0 0 6px #22d3ee' : 'none' }} />
+            <span className="font-mono text-xs" style={{ color: radioTelemetry.txMode ? '#2d6a2d' : '#22d3ee' }}>RX</span>
           </div>
           <div className="flex items-center gap-2 px-2 py-1 rounded" style={{ background: '#0d150d', border: '1px solid #1f3320' }}>
-            <div className="status-dot status-tx" />
-            <span className="font-mono text-xs" style={{ color: '#ef4444' }}>TX</span>
+            <div className="status-dot" style={{ background: radioTelemetry.txMode ? '#ef4444' : '#3a1a1a', boxShadow: radioTelemetry.txMode ? '0 0 8px #ef4444' : 'none' }} />
+            <span className="font-mono text-xs" style={{ color: radioTelemetry.txMode ? '#ef4444' : '#6b2222' }}>TX</span>
           </div>
           <span className="font-mono text-xs" style={{ color: '#2d6a2d' }}>v2.4.1</span>
         </div>
@@ -3497,8 +3613,8 @@ export default function App() {
 
           {/* Net status */}
           <div className="flex flex-col items-center gap-1 mb-2">
-            <SignalBars strength={4} />
-            <span className="font-display" style={{ fontSize: 7, color: '#2d6a2d', letterSpacing: '0.06em' }}>S7</span>
+            <SignalBars strength={signalBars} />
+            <span className="font-display" style={{ fontSize: 7, color: '#2d6a2d', letterSpacing: '0.06em' }}>{signalLabel}</span>
           </div>
         </div>
 
@@ -3514,9 +3630,11 @@ export default function App() {
             onLicenseChange={setLicense}
             emergencyOverride={emergencyOverride}
             onEmergencyOverrideChange={setEmergencyOverride}
+            signalLevel={radioTelemetry.sMeter}
+            netStatus={radioTelemetry.frequencyAllowed && meshHealthy}
           />
           <div className="flex flex-1 overflow-hidden" style={{ background: '#080c08' }}>
-            {section === 'radio' && <RadioSection country={country} license={license} emergencyOverride={emergencyOverride} />}
+            {section === 'radio' && <RadioSection country={country} license={license} emergencyOverride={emergencyOverride} onTelemetryChange={setRadioTelemetry} />}
             {section === 'channels' && <ChannelsSection />}
             {section === 'mail' && <MailSection />}
             {section === 'lora' && <LoRaSection />}
@@ -3530,7 +3648,7 @@ export default function App() {
       <div style={{ background: '#050905', borderTop: '1px solid #1f3320', height: 24, padding: '0 16px' }}
         className="flex items-center gap-4 shrink-0">
         <span className="font-mono text-xs" style={{ color: '#2d6a2d', fontSize: 10 }}>
-          KD9LMX · Grid DM79 · 14.300 MHz USB · 100W
+          {callsign} · Grid DM79 · {mainFreqMhz} MHz {radioTelemetry.mode} · {Math.round(radioTelemetry.power)}W · VFO-{radioTelemetry.activeVfo} · STEP {radioTelemetry.tuningStep}Hz
         </span>
         <span style={{ color: '#1f3320' }}>|</span>
         <span className="font-mono text-xs" style={{ color: '#1f4a1f', fontSize: 10 }}>

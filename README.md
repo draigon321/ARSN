@@ -31,6 +31,8 @@ Implemented so far:
 - Persistent LoRa mesh settings and operator identity fields
 - Extracted local seed collections for channels, mail, and wiki content into `src/appSeedData.ts`
 - Extracted local mesh seed collections into `src/meshSeedData.ts`
+- Radio cockpit indicators now reflect live values (RX/TX, S-meter, RF power, mesh health, and status bar frequency/mode/power)
+- Active tuning step (1Hz/10Hz/100Hz/1kHz) and active VFO now drive knob tuning and mode/frequency entry behavior
 
 ## Run Locally
 
