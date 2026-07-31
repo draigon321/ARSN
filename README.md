@@ -35,6 +35,8 @@ Implemented so far:
 - Active tuning step (1Hz/10Hz/100Hz/1kHz) and active VFO now drive knob tuning and mode/frequency entry behavior
 - Radio S-meter and spectrum scope now derive from a deterministic frequency-proximity signal model instead of random placeholder values
 - LOCK, MEMO, SCAN (up/down/off), and VOX controls now execute real cockpit actions
+- Signal source definitions are now JSON-backed in `src/radioSignalSources.json` and loaded via `src/radioSignalSources.ts`
+- `SRC EDIT` in Signal Controls opens an in-app editor to add/remove/update source frequencies, modes, and strengths (persisted locally)
 
 ## Run Locally
 
@@ -56,6 +58,8 @@ npm run build
 - `src/App.tsx` - Main application shell and all current feature sections
 - `src/appSeedData.ts` - Local seed content for channels, mail, and wiki views
 - `src/meshSeedData.ts` - Local seed content for LoRa / Meshtastic views
+- `src/radioSignalSources.json` - Default radio signal-source database for S-meter and scope simulation
+- `src/radioSignalSources.ts` - Typed loader for radio signal-source defaults
 - `src/index.css` - Global styling and theme tokens
 - `src/main.tsx` - React bootstrap entrypoint
 - `package.json` - Scripts and dependencies

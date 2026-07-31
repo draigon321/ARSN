@@ -1,0 +1,12 @@
+[
+  { "freqKhz": 14074, "mode": "FT8", "strength": 7.5 },
+  { "freqKhz": 14200, "mode": "USB", "strength": 8.4 },
+  { "freqKhz": 14300, "mode": "USB", "strength": 6.8 },
+  { "freqKhz": 7250, "mode": "LSB", "strength": 7.2 },
+  { "freqKhz": 3985, "mode": "LSB", "strength": 6.4 },
+  { "freqKhz": 146520, "mode": "FM", "strength": 8.8 },
+  { "freqKhz": 147195, "mode": "FM", "strength": 6.2 },
+  { "freqKhz": 144390, "mode": "DIG", "strength": 5.4 },
+  { "freqKhz": 446000, "mode": "FM", "strength": 7.3 },
+  { "freqKhz": 28500, "mode": "USB", "strength": 5.8 }
+]

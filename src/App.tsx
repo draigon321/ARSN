@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { BAND_FREQS, getAllowedBands, getAllowedModes, getBandForFrequency, getFrequencyBounds, getRadioCountryProfile, RADIO_BANDS, RADIO_COUNTRY_PROFILES, isFrequencyAllowed } from './radioRestrictions'
 import { CHANNEL_MESSAGES, MAIL_MESSAGES, WIKI_ARTICLES } from './appSeedData'
 import { MESH_CHANNELS_INIT, MESH_MESSAGES, MESH_NODES } from './meshSeedData'
+import { DEFAULT_SIGNAL_SOURCES, type SignalSource } from './radioSignalSources'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -2654,25 +2655,6 @@ interface SavedFrequency {
   mode: string
 }
 
-interface SignalSource {
-  freqKhz: number
-  mode: string
-  strength: number
-}
-
-const SIGNAL_SOURCES: SignalSource[] = [
-  { freqKhz: 14074, mode: 'FT8', strength: 7.5 },
-  { freqKhz: 14200, mode: 'USB', strength: 8.4 },
-  { freqKhz: 14300, mode: 'USB', strength: 6.8 },
-  { freqKhz: 7250, mode: 'LSB', strength: 7.2 },
-  { freqKhz: 3985, mode: 'LSB', strength: 6.4 },
-  { freqKhz: 146520, mode: 'FM', strength: 8.8 },
-  { freqKhz: 147195, mode: 'FM', strength: 6.2 },
-  { freqKhz: 144390, mode: 'DIG', strength: 5.4 },
-  { freqKhz: 446000, mode: 'FM', strength: 7.3 },
-  { freqKhz: 28500, mode: 'USB', strength: 5.8 },
-]
-
 interface RadioTelemetry {
   txMode: boolean
   sMeter: number
@@ -2989,6 +2971,9 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
   const [scanDirection, setScanDirection] = useStoredState<'up' | 'down'>('arsn.radio.scanDirection', 'up')
   const [voxEnabled, setVoxEnabled] = useStoredState('arsn.radio.voxEnabled', false)
   const [voxLatchedTx, setVoxLatchedTx] = useState(false)
+  const [signalSources, setSignalSources] = useStoredState<SignalSource[]>('arsn.radio.signalSources', DEFAULT_SIGNAL_SOURCES)
+  const [sourceEditorOpen, setSourceEditorOpen] = useState(false)
+  const [sourceDrafts, setSourceDrafts] = useState<SignalSource[]>(signalSources)
   const frequencyBounds = getFrequencyBounds()
   const meshOnlineCount = MESH_NODES.filter(node => node.isOnline).length
   const activeFreqKhz = vfoA ? freqKhz : subFreqKhz
@@ -3020,6 +3005,35 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
     setSubMode(nextMode)
   }
 
+  const normalizeSource = (source: SignalSource): SignalSource => {
+    const fallbackMode = MODES.includes(source.mode) ? source.mode : 'USB'
+    return {
+      freqKhz: Math.max(frequencyBounds.minKhz, Math.min(frequencyBounds.maxKhz, Math.round(source.freqKhz))),
+      mode: fallbackMode,
+      strength: Math.max(0.5, Math.min(9.9, Number(source.strength) || 5)),
+    }
+  }
+
+  const addDraftSource = () => {
+    setSourceDrafts(prev => [...prev, { freqKhz: activeFreqKhz, mode: activeMode, strength: Math.max(1, Number(sMeter.toFixed(1))) }])
+  }
+
+  const saveSourceDrafts = () => {
+    const cleaned = sourceDrafts.map(normalizeSource).sort((a, b) => a.freqKhz - b.freqKhz)
+    setSignalSources(cleaned)
+    setSourceEditorOpen(false)
+  }
+
+  const resetSignalSources = () => {
+    setSourceDrafts(DEFAULT_SIGNAL_SOURCES)
+  }
+
+  useEffect(() => {
+    if (sourceEditorOpen) {
+      setSourceDrafts(signalSources)
+    }
+  }, [signalSources, sourceEditorOpen])
+
   // Deterministic signal model from tuned frequency + control state.
   useEffect(() => {
     const modeWidthKhz = activeMode === 'FM' ? 9 : activeMode === 'AM' ? 6 : activeMode === 'FT8' ? 1.2 : activeMode === 'CW' || activeMode === 'CWR' ? 0.45 : 2.7
@@ -3027,7 +3041,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
     const attLoss = att === 'OFF' ? 0 : att === '10dB' ? 1.3 : 2.4
     const agcBias = agc === 'FAST' ? 0.15 : agc === 'MID' ? 0 : -0.15
 
-    const visibleSignals = SIGNAL_SOURCES
+    const visibleSignals = signalSources
       .map(source => {
         const distanceKhz = Math.abs(source.freqKhz - activeFreqKhz)
         const width = modeWidthKhz * (source.mode === activeMode ? 1 : 0.8)
@@ -3057,7 +3071,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
     setSignalTarget(target)
     setNoiseFloor(Math.max(2, 9 - rfGain / 13 + squelch / 35 + (att !== 'OFF' ? 0.8 : 0) + (nb ? -0.2 : 0) + (nr ? -0.3 : 0)))
     setScopeSignals(visibleSignals.map(signal => ({ offsetKhz: signal.offsetKhz, strength: Math.min(9.5, signal.rawStrength) })))
-  }, [activeFreqKhz, activeMode, agc, att, nb, nr, rfGain, spectrumSpanKhz, squelch])
+  }, [activeFreqKhz, activeMode, agc, att, nb, nr, rfGain, signalSources, spectrumSpanKhz, squelch])
 
   // Animate meters based on deterministic targets.
   useEffect(() => {
@@ -3465,6 +3479,7 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
                   setScanActive(false)
                 }} color="#22d3ee" />
                 <CtrlButton label="VOX" active={voxEnabled} onClick={() => setVoxEnabled(p => !p)} color="#fbbf24" />
+                <CtrlButton label="SRC EDIT" onClick={() => setSourceEditorOpen(true)} color="#22d3ee" />
               </div>
             </div>
 
@@ -3578,6 +3593,105 @@ function RadioSection({ country, license, emergencyOverride, onTelemetryChange }
 
 
       </div>
+
+      {sourceEditorOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 210, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setSourceEditorOpen(false)}>
+          <div
+            style={{ background: '#0a0d0a', border: '1px solid #2d4d2d', borderRadius: 8, width: 640, maxHeight: '80vh', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.9)' }}
+            onClick={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid #1f3320' }}>
+              <div>
+                <div className="font-display text-xs" style={{ color: '#4ade80', fontSize: 11, letterSpacing: '0.12em' }}>SIGNAL SOURCE DATABASE</div>
+                <div className="font-mono text-xs mt-1" style={{ color: '#2d6a2d' }}>Edit local sources used by S-meter and spectrum scope.</div>
+              </div>
+              <button
+                onClick={() => setSourceEditorOpen(false)}
+                className="font-mono text-xs px-2 py-0.5 rounded"
+                style={{ color: '#2d6a2d', border: '1px solid #1f3320', background: 'transparent' }}>
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4" style={{ maxHeight: '56vh', overflowY: 'auto' }}>
+              <div className="space-y-2">
+                {sourceDrafts.map((source, index) => (
+                  <div key={`${index}-${source.freqKhz}-${source.mode}`} className="grid gap-2 items-center" style={{ gridTemplateColumns: '1.2fr 0.9fr 0.9fr auto' }}>
+                    <input
+                      type="number"
+                      className="px-2 py-1 rounded font-mono text-xs"
+                      value={source.freqKhz}
+                      onChange={event => {
+                        const value = Number(event.target.value)
+                        setSourceDrafts(prev => prev.map((entry, i) => i === index ? { ...entry, freqKhz: Number.isFinite(value) ? value : entry.freqKhz } : entry))
+                      }}
+                    />
+                    <select
+                      className="px-2 py-1 rounded font-mono text-xs"
+                      value={source.mode}
+                      onChange={event => setSourceDrafts(prev => prev.map((entry, i) => i === index ? { ...entry, mode: event.target.value } : entry))}>
+                      {MODES.map(option => <option key={option}>{option}</option>)}
+                    </select>
+                    <input
+                      type="number"
+                      min="0.5"
+                      max="9.9"
+                      step="0.1"
+                      className="px-2 py-1 rounded font-mono text-xs"
+                      value={source.strength}
+                      onChange={event => {
+                        const value = Number(event.target.value)
+                        setSourceDrafts(prev => prev.map((entry, i) => i === index ? { ...entry, strength: Number.isFinite(value) ? value : entry.strength } : entry))
+                      }}
+                    />
+                    <button
+                      onClick={() => setSourceDrafts(prev => prev.filter((_, i) => i !== index))}
+                      className="font-display text-xs px-2 py-1 rounded"
+                      style={{ background: '#1a0808', border: '1px solid #4a1a1a', color: '#ef4444', fontSize: 8 }}>
+                      DEL
+                    </button>
+                  </div>
+                ))}
+                {sourceDrafts.length === 0 && (
+                  <div className="font-mono text-xs" style={{ color: '#2d6a2d' }}>
+                    No sources configured. Add one below.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-4 py-3 flex items-center gap-2" style={{ borderTop: '1px solid #1f3320' }}>
+              <button
+                onClick={addDraftSource}
+                className="font-display text-xs px-3 py-1.5 rounded"
+                style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#4ade80', letterSpacing: '0.08em' }}>
+                + ADD SOURCE
+              </button>
+              <button
+                onClick={resetSignalSources}
+                className="font-display text-xs px-3 py-1.5 rounded"
+                style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#2d6a2d', letterSpacing: '0.08em' }}>
+                RESET DEFAULTS
+              </button>
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={() => setSourceEditorOpen(false)}
+                  className="font-display text-xs px-3 py-1.5 rounded"
+                  style={{ background: '#0a1208', border: '1px solid #1a2e1a', color: '#2d6a2d', letterSpacing: '0.08em' }}>
+                  CANCEL
+                </button>
+                <button
+                  onClick={saveSourceDrafts}
+                  className="font-display text-xs px-3 py-1.5 rounded"
+                  style={{ background: '#162016', border: '1px solid #4ade80', color: '#4ade80', letterSpacing: '0.08em' }}>
+                  SAVE
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Morse button */}
       {morseOpen && <MorsePopup onClose={() => setMorseOpen(false)} />}
