@@ -3074,9 +3074,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     void context.resume()
     try {
       if (!txInputStreamRef.current?.active) {
-        txInputStreamRef.current = await navigator.mediaDevices.getUserMedia({
-          audio: txInputDeviceId === 'default' ? true : { deviceId: { exact: txInputDeviceId } },
-        })
+        txInputStreamRef.current = await requestTxInputStream()
       }
       const source = context.createMediaStreamSource(txInputStreamRef.current)
       const processor = context.createScriptProcessor(2048, 1, 1)
@@ -3583,10 +3581,32 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     }
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
-      setAudioDevices(devices.filter(device => device.kind === 'audioinput' || device.kind === 'audiooutput'))
-      setAudioDeviceStatus(`${devices.filter(device => device.kind.startsWith('audio')).length} DEVICES FOUND`)
+      const audioDeviceList = devices.filter(device => device.kind === 'audioinput' || device.kind === 'audiooutput')
+      setAudioDevices(audioDeviceList)
+      if (txInputDeviceId !== 'default' && !audioDeviceList.some(device => device.kind === 'audioinput' && device.deviceId === txInputDeviceId)) {
+        setTxInputDeviceId('default')
+      }
+      if (rxOutputDeviceId !== 'default' && !audioDeviceList.some(device => device.kind === 'audiooutput' && device.deviceId === rxOutputDeviceId)) {
+        setRxOutputDeviceId('default')
+      }
+      setAudioDeviceStatus(`${audioDeviceList.length} DEVICES FOUND`)
     } catch {
       setAudioDeviceStatus('DEVICE SCAN FAILED')
+    }
+  }
+
+  const requestTxInputStream = async () => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: txInputDeviceId === 'default' ? true : { deviceId: { exact: txInputDeviceId } },
+      })
+    } catch (error) {
+      if (txInputDeviceId !== 'default' && error instanceof DOMException && (error.name === 'OverconstrainedError' || error.name === 'NotFoundError')) {
+        setTxInputDeviceId('default')
+        setAudioDeviceStatus('SELECTED MIC STALE · RETRYING DEFAULT')
+        return navigator.mediaDevices.getUserMedia({ audio: true })
+      }
+      throw error
     }
   }
 
@@ -3614,9 +3634,7 @@ function RadioSection({ callsign, country, license, emergencyOverride, onTelemet
     }
     try {
       txInputStreamRef.current?.getTracks().forEach(track => track.stop())
-      txInputStreamRef.current = await navigator.mediaDevices.getUserMedia({
-        audio: txInputDeviceId === 'default' ? true : { deviceId: { exact: txInputDeviceId } },
-      })
+      txInputStreamRef.current = await requestTxInputStream()
       setAudioDeviceStatus('TX INPUT READY')
       await refreshAudioDevices()
     } catch (error) {
