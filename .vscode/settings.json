@@ -1,0 +1,10 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "Get-Command": true,
+        "ForEach-Object": true,
+        "Test-Path": true
+    },
+    "terminal.integrated.env.windows": {
+        "PATH": "${workspaceFolder}\\.tools\\node-v24.18.1-win-x64;${env:PATH}"
+    }
+}

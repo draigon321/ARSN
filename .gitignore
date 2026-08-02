@@ -1,2 +1,5 @@
 queue/
 dist/
+node_modules/
+.tools/
+package-lock.json

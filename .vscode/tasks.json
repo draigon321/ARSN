@@ -4,8 +4,13 @@
     {
       "label": "vite: dev",
       "type": "shell",
-      "command": "npm",
+      "command": "npm.cmd",
       "args": ["run", "dev"],
+      "options": {
+        "env": {
+          "PATH": "${workspaceFolder}\\.tools\\node-v24.18.1-win-x64;${env:PATH}"
+        }
+      },
       "isBackground": true,
       "problemMatcher": {
         "base": "$tsc-watch",
